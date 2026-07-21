@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { runAi } from "@/ai/gateway";
 import { AiRateLimitError, AiStorageError, AiTimeoutError, AiValidationError } from "@/ai/errors";
-import { generateQuoteSchema, quoteSystemPrompt } from "@/ai/prompts/generate-quote";
+import { createQuoteSystemPrompt, generateQuoteSchema } from "@/ai/prompts/generate-quote";
+import { getOrganizationContext } from "@/i18n/organization-context";
 import { createClient } from "@/lib/supabase/server";
 
 const inputSchema = z.object({
@@ -11,13 +12,14 @@ const inputSchema = z.object({
   requestText: z.string().trim().min(20).max(30000),
 });
 
-const normalizeCatalogName = (value: string) => value.trim().toLocaleLowerCase("nl-NL");
+const normalizeCatalogName = (value: string, locale: Intl.LocalesArgument) => value.trim().toLocaleLowerCase(locale);
 
 export async function POST(request: Request, { params }: { params: Promise<{ companyId: string }> }) {
   const input = inputSchema.safeParse(await request.json());
   if (!input.success) return NextResponse.json({ error: { code: "INVALID_INPUT", message: "Vul klant en aanvraag volledig in." } }, { status: 400 });
 
   const { companyId } = await params;
+  const organization = getOrganizationContext(companyId);
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: { code: "UNAUTHENTICATED", message: "Log opnieuw in." } }, { status: 401 });
@@ -39,7 +41,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ com
     .eq("is_active", true)
     .limit(100);
   const activeCatalog = catalog ?? [];
-  const catalogByName = new Map(activeCatalog.map((item) => [normalizeCatalogName(item.name), item]));
+  const catalogByName = new Map(activeCatalog.map((item) => [normalizeCatalogName(item.name, organization.locale), item]));
   const catalogText = activeCatalog
     .map((item) => `${item.name}${item.sku ? ` (${item.sku})` : ""}: ${item.unit}`)
     .join("\n");
@@ -49,7 +51,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ com
       companyId,
       userId: user.id,
       feature: "quote_generation",
-      systemPrompt: quoteSystemPrompt,
+      language: organization.language,
+      locale: organization.locale,
+      systemPrompt: createQuoteSystemPrompt(organization.language, organization.locale),
       userPrompt: `Aanvraag:\n${input.data.requestText}\n\nBeschikbare catalogusproducten (zonder prijzen):\n${catalogText || "Geen catalogusproducten beschikbaar."}`,
       schema: generateQuoteSchema,
       metadata: { catalogItemCount: activeCatalog.length, requestLength: input.data.requestText.length },
@@ -57,7 +61,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ com
     }, async ({ data }) => {
       const notes = `${data.summary}\n\nAannames:\n${data.assumptions.map((item) => `- ${item}`).join("\n")}\n\nKlantvragen:\n${data.customerQuestions.map((item) => `- ${item}`).join("\n")}`;
       const draftItems = data.items.map((item) => {
-        const matchedCatalogItem = catalogByName.get(normalizeCatalogName(item.catalogItemName ?? item.description));
+        const matchedCatalogItem = catalogByName.get(normalizeCatalogName(item.catalogItemName ?? item.description, organization.locale));
         return {
           description: item.description,
           quantity: item.quantity,

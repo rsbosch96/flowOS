@@ -3,10 +3,26 @@ import { readFile, readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import { calculateAiCost } from "../src/ai/costs.ts";
-import { AiErrorCode, AiRateLimitError, AiTimeoutError, getAiErrorCode } from "../src/ai/errors.ts";
+import { AiBudgetStatus, type AiBudgetCostSnapshot } from "../src/ai/types.ts";
+import { AiBudgetStatusUnknownError, AiErrorCode, AiRateLimitError, AiTimeoutError, getAiErrorCode } from "../src/ai/errors.ts";
 import { executeAiRun } from "../src/ai/gateway-core.ts";
+import { createQuoteSystemPrompt } from "../src/ai/prompts/generate-quote.ts";
+import { defaultCurrency, defaultLanguage, defaultLocale, supportedLanguages, supportedLocales } from "../src/i18n/config.ts";
+import { formatDate, formatMoney } from "../src/i18n/formatters.ts";
+import { getTranslations } from "../src/i18n/get-translations.ts";
+import { getOrganizationContext } from "../src/i18n/organization-context.ts";
 
 const file = (path: string) => readFile(resolve(process.cwd(), path), "utf8");
+const defaultRequest = {
+  companyId: "company",
+  userId: "user",
+  feature: "quote_generation" as const,
+  language: "nl" as const,
+  locale: "nl-NL" as const,
+  systemPrompt: "system",
+  userPrompt: "input",
+  schema: { safeParse: () => ({ success: true, data: {} }) } as never,
+};
 
 async function sourceFiles(directory: string): Promise<string[]> {
   const entries = await readdir(resolve(process.cwd(), directory), { withFileTypes: true });
@@ -27,13 +43,10 @@ test("a provider failure creates one failed AI run", async () => {
   const finished: Array<{ runId: string; status: string; durationMs: number; currency: "EUR"; errorCode?: string }> = [];
   await assert.rejects(
     executeAiRun(
-      { companyId: "company", userId: "user", feature: "quote_generation", systemPrompt: "system", userPrompt: "input", schema: { safeParse: () => ({ success: true, data: {} }) } as never },
+      defaultRequest,
       {
         provider: { name: "openai", generate: async () => { throw new AiRateLimitError("rate limited"); } },
-        runs: {
-          start: async () => "run-1",
-          finish: async (entry) => { finished.push(entry); },
-        },
+        runs: { start: async () => "run-1", finish: async (entry) => { finished.push(entry); } },
       },
     ),
     AiRateLimitError,
@@ -48,6 +61,7 @@ test("a provider failure creates one failed AI run", async () => {
 test("AI error classes use only central governance error codes", () => {
   assert.equal(getAiErrorCode(new AiRateLimitError("rate limited")), AiErrorCode.RateLimit);
   assert.equal(getAiErrorCode(new AiTimeoutError("timeout")), AiErrorCode.Timeout);
+  assert.equal(getAiErrorCode(new AiBudgetStatusUnknownError("unknown cost")), AiErrorCode.BudgetStatusUnknown);
   assert.equal(getAiErrorCode(new Error("unknown")), AiErrorCode.Unknown);
 });
 
@@ -73,13 +87,10 @@ test("gateway records EUR-normalized cost metadata for every completed run", asy
   process.env.AI_USD_EUR_RATE = "1";
   const finished: Array<{ estimatedCostCents?: number | null; currency: "EUR"; provider?: string; status: string }> = [];
   try {
-    await executeAiRun(
-      { companyId: "company", userId: "user", feature: "quote_generation", systemPrompt: "system", userPrompt: "input", schema: { safeParse: () => ({ success: true, data: {} }) } as never },
-      {
-        provider: { name: "openai", generate: async () => ({ data: {}, provider: "openai" as const, model: "known-model", usage: { inputTokens: 1_000_000, outputTokens: 0, totalTokens: 1_000_000 } }) } as never,
-        runs: { start: async () => "run-2", finish: async (entry) => { finished.push(entry); } },
-      },
-    );
+    await executeAiRun(defaultRequest, {
+      provider: { name: "openai", generate: async () => ({ data: {}, provider: "openai" as const, model: "known-model", usage: { inputTokens: 1_000_000, outputTokens: 0, totalTokens: 1_000_000 } }) } as never,
+      runs: { start: async () => "run-2", finish: async (entry) => { finished.push(entry); } },
+    });
   } finally {
     if (previousPricing === undefined) delete process.env.AI_MODEL_PRICING_JSON; else process.env.AI_MODEL_PRICING_JSON = previousPricing;
     if (previousRate === undefined) delete process.env.AI_USD_EUR_RATE; else process.env.AI_USD_EUR_RATE = previousRate;
@@ -134,4 +145,55 @@ test("service-role credentials are not imported by client components", async () 
   for (const { path, content } of contents.filter(({ content }) => content.startsWith('"use client"') || content.startsWith("'use client'"))) {
     assert.doesNotMatch(content, /@\/lib\/supabase\/admin|SUPABASE_SERVICE_ROLE_KEY|SUPABASE_SECRET_KEY/, path);
   }
+});
+
+test("Dutch is the fallback language and non-Dutch requests safely use Dutch messages", () => {
+  assert.equal(getTranslations().language, "nl");
+  assert.equal(getTranslations("en").language, "nl");
+  assert.equal(getTranslations("de").t("navigation.quotes"), getTranslations("nl").t("navigation.quotes"));
+});
+
+test("supported language and locale contracts are explicitly bounded", () => {
+  assert.deepEqual(supportedLanguages, ["nl", "en", "de", "es"]);
+  assert.deepEqual(supportedLocales, ["nl-NL", "en-GB", "de-DE", "es-ES"]);
+});
+
+test("formatters respect their locale and EUR currency", () => {
+  assert.equal(formatMoney(12_345, "en-GB", "EUR"), new Intl.NumberFormat("en-GB", { style: "currency", currency: "EUR" }).format(123.45));
+  assert.equal(formatDate("2026-07-21T00:00:00.000Z", "de-DE"), new Intl.DateTimeFormat("de-DE", { dateStyle: "medium" }).format(new Date("2026-07-21T00:00:00.000Z")));
+});
+
+test("organization context has separate safe Dutch defaults", () => {
+  assert.deepEqual(getOrganizationContext("company-1"), {
+    companyId: "company-1",
+    language: defaultLanguage,
+    locale: defaultLocale,
+    currency: defaultCurrency,
+  });
+});
+
+test("quote prompt gets explicit language and locale without AI price fields", async () => {
+  const prompt = createQuoteSystemPrompt("nl", "nl-NL");
+  const promptSource = await file("src/ai/prompts/generate-quote.ts");
+  assert.match(prompt, /taal nl/);
+  assert.match(prompt, /locale nl-NL/);
+  assert.doesNotMatch(promptSource, /unitPriceCents|totalCents|vatPercent/);
+});
+
+test("Dutch quote route keeps catalog prices server-side and passes a language contract", async () => {
+  const route = await file("src/app/api/v1/companies/[companyId]/quotes/generate/route.ts");
+  assert.match(route, /getOrganizationContext\(companyId\)/);
+  assert.match(route, /language: organization\.language/);
+  assert.match(route, /locale: organization\.locale/);
+  assert.match(route, /create_ai_quote_draft/);
+  assert.doesNotMatch(route, /unitPriceCents|totalCents|vatPercent/);
+});
+
+test("NULL costs remain fail-closed in the architectural budget contract", async () => {
+  const documentation = await file("docs/architecture/ai-cost-unknown-fail-closed.md");
+  const snapshot: AiBudgetCostSnapshot = { status: AiBudgetStatus.Unknown, knownSpendCents: 0, unknownCostRunCount: 1 };
+  assert.equal(calculateAiCost({ model: "unpriced", usage: {}, pricing: {}, usdEurRate: 0.9 }).estimatedCostCents, null);
+  assert.equal(snapshot.status, "unknown");
+  assert.match(documentation, /mag nooit als nul/i);
+  assert.match(documentation, /geen nieuwe betaalde provider-aanroep/i);
 });
