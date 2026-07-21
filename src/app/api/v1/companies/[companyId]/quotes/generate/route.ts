@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { runAi } from "@/ai/gateway";
-import { AiRateLimitError, AiStorageError, AiTimeoutError, AiValidationError } from "@/ai/errors";
+import { AiConfigurationError, AiProviderError, AiRateLimitError, AiRunError, AiStorageError, AiTimeoutError, AiValidationError } from "@/ai/errors";
 import { createQuoteSystemPrompt, generateQuoteSchema } from "@/ai/prompts/generate-quote";
 import { getOrganizationContext } from "@/i18n/organization-context";
 import { createClient } from "@/lib/supabase/server";
@@ -13,6 +13,17 @@ const inputSchema = z.object({
 });
 
 const normalizeCatalogName = (value: string, locale: Intl.LocalesArgument) => value.trim().toLocaleLowerCase(locale);
+
+function quoteGenerationFailure(error: unknown) {
+  if (error instanceof AiConfigurationError) return { status: 503, code: "AI_CONFIGURATION_REQUIRED", message: "De AI-offerteassistent is nog niet volledig geconfigureerd." };
+  if (error instanceof AiRateLimitError) return { status: 429, code: "AI_RATE_LIMIT", message: "De AI-limiet is bereikt. Probeer het later opnieuw." };
+  if (error instanceof AiTimeoutError) return { status: 504, code: "AI_TIMEOUT", message: "De AI-opdracht duurde te lang. Probeer het opnieuw." };
+  if (error instanceof AiValidationError) return { status: 422, code: "AI_VALIDATION_FAILED", message: "De AI-uitvoer kon niet veilig als offerteconcept worden verwerkt." };
+  if (error instanceof AiStorageError) return { status: 500, code: "QUOTE_STORAGE_FAILED", message: "Het offerteconcept kon niet worden opgeslagen." };
+  if (error instanceof AiRunError) return { status: 503, code: "AI_RUN_UNAVAILABLE", message: "De AI-opdracht kan momenteel niet worden gestart." };
+  if (error instanceof AiProviderError) return { status: 502, code: "AI_PROVIDER_UNAVAILABLE", message: "De AI-provider is tijdelijk niet bereikbaar." };
+  return { status: 502, code: "AI_GENERATION_FAILED", message: "Het offerteconcept kon niet worden gemaakt. Probeer het opnieuw." };
+}
 
 export async function POST(request: Request, { params }: { params: Promise<{ companyId: string }> }) {
   const input = inputSchema.safeParse(await request.json());
@@ -83,16 +94,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ com
 
     return NextResponse.json({ quoteId: result.quoteId, aiRunId: result.runId }, { status: 201 });
   } catch (error) {
-    const status = error instanceof AiRateLimitError ? 429
-      : error instanceof AiTimeoutError ? 504
-        : error instanceof AiValidationError ? 422
-          : error instanceof AiStorageError ? 500
-            : 502;
-    return NextResponse.json({
-      error: {
-        code: "AI_GENERATION_FAILED",
-        message: "Het offerteconcept kon niet worden gemaakt. Controleer de aanvraag en probeer opnieuw.",
-      },
-    }, { status });
+    const failure = quoteGenerationFailure(error);
+    return NextResponse.json({ error: { code: failure.code, message: failure.message } }, { status: failure.status });
   }
 }

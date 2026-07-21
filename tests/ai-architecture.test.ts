@@ -39,6 +39,21 @@ test("quote generation route delegates AI lifecycle to the gateway", async () =>
   assert.doesNotMatch(route, /start_ai_run|finish_ai_run|openai-provider|OpenAiProvider/);
 });
 
+test("quote generation exposes typed, safe AI failures to the user interface", async () => {
+  const route = await file("src/app/api/v1/companies/[companyId]/quotes/generate/route.ts");
+  const assistant = await file("src/features/quotes/components/quote-assistant.tsx");
+  const admin = await file("src/lib/supabase/admin.ts");
+  assert.match(admin, /throw new AiConfigurationError/);
+  assert.match(route, /AI_CONFIGURATION_REQUIRED/);
+  assert.match(route, /AI_RATE_LIMIT/);
+  assert.match(route, /AI_TIMEOUT/);
+  assert.match(route, /AI_VALIDATION_FAILED/);
+  assert.match(route, /AI_PROVIDER_UNAVAILABLE/);
+  assert.match(assistant, /errorMessage\(payload\.error\?\.code\)/);
+  assert.match(assistant, /aiQuote\.configurationRequired/);
+  assert.doesNotMatch(assistant, /payload\.error\?\.message/);
+});
+
 test("a provider failure creates one failed AI run", async () => {
   const finished: Array<{ runId: string; status: string; durationMs: number; currency: "EUR"; errorCode?: string }> = [];
   await assert.rejects(
@@ -109,6 +124,17 @@ test("migration keeps quote storage atomic and catalog prices authoritative", as
   assert.match(migration, /item_price_cents := catalog_item\.default_unit_price_cents/);
   assert.match(migration, /item_price_cents := 0/);
   assert.match(migration, /insert into public\.customers[\s\S]*insert into public\.quotes[\s\S]*insert into public\.quote_items/);
+});
+
+test("repair migration restores the authenticated atomic quote-draft RPC", async () => {
+  const migration = await file("supabase/migrations/018_restore_create_ai_quote_draft.sql");
+  assert.match(migration, /create or replace function public\.create_ai_quote_draft/);
+  assert.match(migration, /security definer/);
+  assert.match(migration, /insert into public\.customers[\s\S]*insert into public\.quotes[\s\S]*insert into public\.quote_items/);
+  assert.doesNotMatch(migration, /exception\s+when/i);
+  assert.match(migration, /item_price_cents := catalog_item\.default_unit_price_cents/);
+  assert.match(migration, /item_price_cents := 0/);
+  assert.match(migration, /grant execute on function public\.create_ai_quote_draft[\s\S]* to authenticated/);
 });
 
 test("quote and invoice line items preserve price and description snapshots", async () => {

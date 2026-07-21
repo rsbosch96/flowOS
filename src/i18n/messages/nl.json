@@ -22,4 +22,13 @@
   "quotes.reviewRequired": "Concepten vereisen altijd menselijke review.",
   "quotes.empty": "Nog geen offertes.",
   "quotes.unknownCustomer": "Onbekende klant"
+  ,"aiQuote.configurationRequired": "De AI-offerteassistent is nog niet volledig geconfigureerd. Vraag een beheerder om de serverconfiguratie te controleren."
+  ,"aiQuote.rateLimit": "De AI-limiet is bereikt. Probeer het later opnieuw."
+  ,"aiQuote.timeout": "De AI-opdracht duurde te lang. Probeer het opnieuw."
+  ,"aiQuote.validationFailed": "De AI-uitvoer kon niet veilig als offerteconcept worden verwerkt."
+  ,"aiQuote.storageFailed": "Het offerteconcept kon niet worden opgeslagen."
+  ,"aiQuote.runUnavailable": "De AI-opdracht kan momenteel niet worden gestart."
+  ,"aiQuote.providerUnavailable": "De AI-provider is tijdelijk niet bereikbaar."
+  ,"aiQuote.genericFailure": "Het offerteconcept kon niet worden gemaakt. Probeer het opnieuw."
+  ,"aiQuote.networkFailure": "De server is niet bereikbaar. Controleer je verbinding en probeer het opnieuw."
 }
