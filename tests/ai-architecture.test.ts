@@ -111,6 +111,24 @@ test("migration keeps quote storage atomic and catalog prices authoritative", as
   assert.match(migration, /insert into public\.customers[\s\S]*insert into public\.quotes[\s\S]*insert into public\.quote_items/);
 });
 
+test("quote and invoice line items preserve price and description snapshots", async () => {
+  const schema = await file("outputs/database-schema.sql");
+  const invoices = await file("supabase/migrations/010_invoices.sql");
+  const quoteItemDefinition = schema.match(/create table public\.quote_items \(([\s\S]*?)\n\);/)?.[1] ?? "";
+  const invoiceItemDefinition = invoices.match(/create table public\.invoice_items \(([\s\S]*?)\n\);/)?.[1] ?? "";
+
+  for (const itemDefinition of [quoteItemDefinition, invoiceItemDefinition]) {
+    assert.match(itemDefinition, /description text not null/);
+    assert.match(itemDefinition, /quantity numeric/);
+    assert.match(itemDefinition, /unit_price_cents bigint not null/);
+    assert.match(itemDefinition, /vat_rate numeric/);
+    assert.match(itemDefinition, /line_total_cents bigint not null/);
+    assert.doesNotMatch(itemDefinition, /catalog_item_id|product_catalog_items/);
+  }
+
+  assert.match(invoices, /select new_invoice_id, position, description, quantity, unit, unit_price_cents, vat_rate, line_total_cents from public\.quote_items/);
+});
+
 test("public quote routes reject malformed input without provider error details", async () => {
   const route = await file("src/app/api/public/quotes/[token]/route.ts");
   const page = await file("src/app/offerte/[token]/page.tsx");
