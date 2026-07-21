@@ -191,6 +191,18 @@ test("service-role credentials are not imported by client components", async () 
   }
 });
 
+test("onboarding only receives authenticated users without memberships by default and remains available for a demo organization", async () => {
+  const home = await file("src/app/page.tsx");
+  const onboarding = await file("src/app/onboarding/page.tsx");
+  const layout = await file("src/app/(app)/app/[companySlug]/layout.tsx");
+  const form = await file("src/features/onboarding/components/onboarding-form.tsx");
+  assert.match(home, /redirect\(company \? `\/app\/\$\{company\.slug\}` : "\/onboarding"\)/);
+  assert.match(onboarding, /if \(!user\) redirect\("\/login"\)/);
+  assert.match(onboarding, /hasExistingOrganization=\{Boolean\(membership\)\}/);
+  assert.match(layout, /href="\/onboarding"/);
+  assert.match(form, /onboarding\.additionalDescription/);
+});
+
 test("Dutch is the fallback language and non-Dutch requests safely use Dutch messages", () => {
   assert.equal(getTranslations().language, "nl");
   assert.equal(getTranslations("en").language, "nl");

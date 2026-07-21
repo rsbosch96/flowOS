@@ -31,11 +31,16 @@ export default async function CompanyLayout({
           <Link href="/" className="flex items-center gap-2 font-semibold">
             <Building2 className="text-blue-700" /> AI FlowOS
           </Link>
-          <form action="/api/auth/signout" method="post">
-            <button className="inline-flex items-center gap-2 text-sm text-slate-600 hover:text-slate-950">
-              <LogOut size={16} /> {t("action.signOut")}
-            </button>
-          </form>
+          <div className="flex items-center gap-4">
+            <Link href="/onboarding" className="text-sm text-slate-600 hover:text-slate-950">
+              {t("action.addOrganization")}
+            </Link>
+            <form action="/api/auth/signout" method="post">
+              <button className="inline-flex items-center gap-2 text-sm text-slate-600 hover:text-slate-950">
+                <LogOut size={16} /> {t("action.signOut")}
+              </button>
+            </form>
+          </div>
         </div>
       </header>
       <div className="mx-auto grid max-w-7xl gap-8 px-6 py-8 md:grid-cols-[190px_1fr]">
