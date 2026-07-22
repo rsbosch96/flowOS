@@ -155,6 +155,74 @@ test("quote and invoice line items preserve price and description snapshots", as
   assert.match(invoices, /select new_invoice_id, position, description, quantity, unit, unit_price_cents, vat_rate, line_total_cents from public\.quote_items/);
 });
 
+test("catalog archiving preserves VAT snapshots and prevents future AI quote selection", async () => {
+  const catalogRoute = await file("src/app/api/v1/companies/[companyId]/catalog/[productId]/route.ts");
+  const imageMigration = await file("supabase/migrations/019_catalog_product_image_storage.sql");
+  const quoteDraft = await file("supabase/migrations/018_restore_create_ai_quote_draft.sql");
+  const invoices = await file("supabase/migrations/010_invoices.sql");
+
+  assert.match(catalogRoute, /isActive: z\.boolean\(\)/);
+  assert.match(catalogRoute, /update\(\{ is_active: active\.data\.isActive/);
+  assert.doesNotMatch(catalogRoute, /\.delete\(\)/);
+  assert.match(quoteDraft, /default_vat_rate/);
+  assert.match(quoteDraft, /item_vat_rate := catalog_item\.default_vat_rate/);
+  assert.match(quoteDraft, /line_total_cents/);
+  assert.match(invoices, /unit_price_cents, vat_rate, line_total_cents from public\.quote_items/);
+  assert.match(imageMigration, /add column if not exists image_storage_path text/);
+});
+
+test("catalog image upload validates content and keeps storage tenant-scoped", async () => {
+  const upload = await file("src/app/api/v1/companies/[companyId]/catalog/[productId]/image/upload-url/route.ts");
+  const confirm = await file("src/app/api/v1/companies/[companyId]/catalog/[productId]/image/confirm/route.ts");
+  const catalogPage = await file("src/app/(app)/app/[companySlug]/catalog/page.tsx");
+  const documentUpload = await file("src/app/api/v1/companies/[companyId]/documents/upload-url/route.ts");
+
+  for (const productImageSource of [upload, confirm, catalogPage]) {
+    assert.match(productImageSource, /company-images/);
+    assert.doesNotMatch(productImageSource, /company-documents/);
+  }
+  assert.match(documentUpload, /storage\.from\("company-documents"\)/);
+  assert.doesNotMatch(documentUpload, /company-images/);
+  assert.match(upload, /\$\{companyId\}\/catalog\/\$\{productId\}/);
+  assert.match(upload, /image\/(jpeg|png)/);
+  assert.match(upload, /5 \* 1024 \* 1024/);
+  assert.match(confirm, /detectedMimeType/);
+  assert.match(confirm, /arrayBuffer\(\)/);
+  assert.match(confirm, /blob\.size > maxBytes/);
+  assert.match(confirm, /remove\(\[input\.data\.path\]\)/);
+  assert.match(confirm, /startsWith\(expectedPrefix\)/);
+  assert.match(confirm, /image_storage_path/);
+});
+
+test("catalog image confirmation rejects a storage path from another tenant before storage access", async () => {
+  const confirm = await file("src/app/api/v1/companies/[companyId]/catalog/[productId]/image/confirm/route.ts");
+
+  assert.match(confirm, /const expectedPrefix = `\$\{companyId\}\/catalog\/\$\{productId\}\//);
+  assert.match(confirm, /if \(!input\.data\.path\.startsWith\(expectedPrefix\)\)/);
+  assert.match(confirm, /Ongeldig afbeeldingspad/);
+  assert.match(confirm, /status: 400/);
+  assert.ok(confirm.indexOf("!input.data.path.startsWith(expectedPrefix)") < confirm.indexOf("storage.from(\"company-images\").download"));
+});
+
+test("storage provisioning concept keeps document and image bucket contracts separate", async () => {
+  const migration = await file("supabase/migrations/020_provision_storage_buckets.sql");
+  const documentUpload = await file("src/app/api/v1/companies/[companyId]/documents/upload-url/route.ts");
+  const imageUpload = await file("src/app/api/v1/companies/[companyId]/catalog/[productId]/image/upload-url/route.ts");
+
+  assert.match(migration, /'company-documents', 'company-documents', false, 26214400/);
+  assert.match(migration, /array\['application\/pdf', 'image\/jpeg', 'image\/png', 'text\/plain'\]::text\[\]/);
+  assert.match(migration, /'company-images', 'company-images', false, 5242880/);
+  assert.match(migration, /array\['image\/jpeg', 'image\/png'\]::text\[\]/);
+  assert.match(migration, /auth\.uid\(\) is not null/);
+  assert.match(migration, /cm\.company_id = case/);
+  assert.match(migration, /cm\.user_id = auth\.uid\(\)/);
+  assert.match(migration, /for insert[\s\S]*with check/);
+  assert.doesNotMatch(migration, /for update/i);
+  assert.match(documentUpload, /storage\.from\("company-documents"\)/);
+  assert.match(imageUpload, /storage\.from\("company-images"\)/);
+  assert.doesNotMatch(imageUpload, /storage\.from\("company-documents"\)/);
+});
+
 test("public quote routes reject malformed input without provider error details", async () => {
   const route = await file("src/app/api/public/quotes/[token]/route.ts");
   const page = await file("src/app/offerte/[token]/page.tsx");
