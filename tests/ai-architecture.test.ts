@@ -171,6 +171,24 @@ test("catalog archiving preserves VAT snapshots and prevents future AI quote sel
   assert.match(imageMigration, /add column if not exists image_storage_path text/);
 });
 
+test("pilot UX exposes a tenant-isolated company profile and an actionable empty catalog", async () => {
+  const migration = await file("supabase/migrations/021_company_profile_contact_fields.sql");
+  const profileRoute = await file("src/app/api/v1/companies/[companyId]/profile/route.ts");
+  const settings = await file("src/app/(app)/app/[companySlug]/settings/page.tsx");
+  const catalog = await file("src/features/catalog/components/catalog-manager.tsx");
+
+  assert.match(migration, /add column if not exists phone text/);
+  assert.match(migration, /add column if not exists email text/);
+  assert.match(migration, /add column if not exists website text/);
+  assert.match(profileRoute, /eq\("company_id", companyId\)\.eq\("user_id", user\.id\)/);
+  assert.match(profileRoute, /membership\?\.role !== "owner"/);
+  assert.match(profileRoute, /phone: emptyToNull/);
+  assert.match(profileRoute, /logo_storage_path/);
+  assert.match(settings, /settings\/company-profile/);
+  assert.match(catalog, /id="catalog-add-form"/);
+  assert.match(catalog, /href="#catalog-add-form"/);
+});
+
 test("catalog image upload validates content and keeps storage tenant-scoped", async () => {
   const upload = await file("src/app/api/v1/companies/[companyId]/catalog/[productId]/image/upload-url/route.ts");
   const confirm = await file("src/app/api/v1/companies/[companyId]/catalog/[productId]/image/confirm/route.ts");

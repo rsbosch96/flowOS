@@ -1,5 +1,14 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Card } from "@/components/ui/card";
-import { createClient } from "@/lib/supabase/server";
 import { BrandingForm } from "@/features/branding/components/branding-form";
-export default async function SettingsPage({ params }: { params: Promise<{ companySlug: string }> }) { const { companySlug } = await params; const supabase = await createClient(); const { data: company } = await supabase.from("companies").select("id").eq("slug", companySlug).maybeSingle(); if (!company) notFound(); const { data: template } = await supabase.from("quote_templates").select("document_title,intro_text,closing_text,accent_color,logo_storage_path").eq("company_id", company.id).eq("is_default", true).maybeSingle(); if (!template) return <Card><h1 className="text-xl font-semibold">Huisstijl</h1><p className="mt-2 text-sm text-red-600">Er is nog geen standaardsjabloon. Voer eerst de database-update 007 uit.</p></Card>; return <Card><h1 className="text-xl font-semibold">Huisstijl en offertesjabloon</h1><p className="mt-1 text-sm text-slate-600">Deze gegevens worden gebruikt voor nieuwe professionele offerte- en factuurdocumenten.</p><BrandingForm companyId={company.id} template={template} /></Card>; }
+import { getTranslations } from "@/i18n/get-translations";
+import { createClient } from "@/lib/supabase/server";
+
+export default async function SettingsPage({ params }: { params: Promise<{ companySlug: string }> }) {
+  const { companySlug } = await params; const supabase = await createClient(); const { t } = getTranslations();
+  const { data: company } = await supabase.from("companies").select("id").eq("slug", companySlug).maybeSingle();
+  if (!company) notFound();
+  const { data: template } = await supabase.from("quote_templates").select("document_title,intro_text,closing_text,accent_color,logo_storage_path").eq("company_id", company.id).eq("is_default", true).maybeSingle();
+  return <div className="space-y-6"><Card><h1 className="text-xl font-semibold">{t("settings.title")}</h1><p className="mt-1 text-sm text-slate-600">{t("settings.description")}</p><Link href={`/app/${companySlug}/settings/company-profile`} className="mt-4 inline-flex rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800">{t("settings.companyProfile")}</Link></Card>{template ? <Card><h2 className="text-xl font-semibold">{t("settings.brandingTitle")}</h2><p className="mt-1 text-sm text-slate-600">{t("settings.brandingDescription")}</p><BrandingForm companyId={company.id} template={template} /></Card> : <Card><h2 className="text-xl font-semibold">{t("settings.brandingTitle")}</h2><p className="mt-2 text-sm text-red-600">{t("settings.templateRequired")}</p></Card>}</div>;
+}
