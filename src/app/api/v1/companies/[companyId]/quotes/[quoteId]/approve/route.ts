@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { recordServerAuditEvent } from "@/lib/audit/server";
 
 export async function POST(_: Request, { params }: { params: Promise<{ companyId: string; quoteId: string }> }) {
   const { companyId, quoteId } = await params; const supabase = await createClient();
@@ -14,6 +15,6 @@ export async function POST(_: Request, { params }: { params: Promise<{ companyId
   if (rules?.require_owner_above_threshold && quote.total_cents >= rules.approval_threshold_cents && membership.role !== "owner") return NextResponse.json({ error: { message: "Voor dit offertebedrag is goedkeuring door een eigenaar vereist." } }, { status: 403 });
   const { data, error } = await supabase.from("quotes").update({ status: "approved", approved_by: user.id, approved_at: new Date().toISOString() }).eq("id", quoteId).eq("company_id", companyId).eq("status", "draft").select("id").maybeSingle();
   if (error || !data) return NextResponse.json({ error: { message: "Offerte is niet meer als concept beschikbaar." } }, { status: 409 });
-  await supabase.from("audit_logs").insert({ company_id: companyId, actor_user_id: user.id, action: "quote.approved", entity_type: "quote", entity_id: quoteId });
+  await recordServerAuditEvent({ companyId, actorUserId: user.id, action: "quote.approved", entityType: "quote", entityId: quoteId });
   return NextResponse.json({ ok: true });
 }

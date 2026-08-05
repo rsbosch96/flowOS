@@ -11,6 +11,7 @@ import { defaultCurrency, defaultLanguage, defaultLocale, supportedLanguages, su
 import { formatDate, formatMoney } from "../src/i18n/formatters.ts";
 import { getTranslations } from "../src/i18n/get-translations.ts";
 import { getOrganizationContext } from "../src/i18n/organization-context.ts";
+import { createQuoteEmail } from "../src/features/quotes/infrastructure/quote-email-template.ts";
 
 const file = (path: string) => readFile(resolve(process.cwd(), path), "utf8");
 const defaultRequest = {
@@ -155,6 +156,92 @@ test("quote and invoice line items preserve price and description snapshots", as
   assert.match(invoices, /select new_invoice_id, position, description, quantity, unit, unit_price_cents, vat_rate, line_total_cents from public\.quote_items/);
 });
 
+test("WP7.2A locks invoices behind tenant-scoped RPCs, atomic numbering and immutable snapshots", async () => {
+  const migration = await file("supabase/migrations/024_invoice_integrity_and_numbering.sql");
+  const invoiceRoute = await file("src/app/api/v1/companies/[companyId]/quotes/[quoteId]/invoice/route.ts");
+  const statusRoute = await file("src/app/api/v1/companies/[companyId]/invoices/[invoiceId]/status/route.ts");
+  const pdfRoute = await file("src/app/api/v1/companies/[companyId]/invoices/[invoiceId]/pdf/route.ts");
+  const source = await Promise.all((await sourceFiles("src")).map(async (path) => ({ path, content: await file(path) })));
+
+  assert.match(migration, /create table if not exists public\.invoice_number_counters/);
+  assert.match(migration, /primary key \(company_id, fiscal_year\)/);
+  assert.match(migration, /on conflict \(company_id, fiscal_year\) do update[\s\S]*next_number = public\.invoice_number_counters\.next_number \+ 1/);
+  assert.doesNotMatch(migration.slice(migration.indexOf("create function public.create_invoice_from_quote")), /count\(\*\)/);
+  assert.match(migration, /where id = target_quote_id and company_id = target_company_id[\s\S]*for update/);
+  assert.match(migration, /select id into new_invoice_id from public\.invoices where quote_id = quote_record\.id/);
+  assert.match(migration, /drop policy if exists "tenant invoices"[\s\S]*for select to authenticated/);
+  assert.doesNotMatch(migration, /for all to authenticated/i);
+  assert.match(migration, /before delete on public\.invoices/);
+  assert.match(migration, /before update or delete on public\.invoice_items/);
+  assert.match(migration, /Invoice content is immutable/);
+  assert.match(migration, /company_name text,[\s\S]*customer_email text/);
+  assert.match(migration, /insert into public\.audit_logs[\s\S]*invoice\.created_from_quote/);
+  assert.match(migration, /invoice\.sent/);
+  assert.match(migration, /invoice\.paid/);
+  assert.match(migration, /invoice\.voided/);
+  assert.match(migration, /invoice_record\.status = 'draft' and target_status = 'sent'/);
+  assert.match(migration, /invoice_record\.status in \('sent', 'overdue'\) and target_status = 'paid'/);
+  assert.match(migration, /invoice_record\.status in \('draft', 'sent', 'overdue'\) and target_status = 'void'/);
+  assert.match(invoiceRoute, /eq\("id", quoteId\)\.eq\("company_id", companyId\)/);
+  assert.match(invoiceRoute, /target_company_id: quote\.company_id/);
+  assert.doesNotMatch(invoiceRoute, /audit_logs/);
+  assert.match(statusRoute, /z\.enum\(\["sent", "paid", "void"\]\)/);
+  assert.match(statusRoute, /eq\("id", invoiceId\)\.eq\("company_id", companyId\)/);
+  assert.match(pdfRoute, /company_name,company_address/);
+  assert.doesNotMatch(pdfRoute, /from\("companies"\)|customers\(/);
+  for (const entry of source.filter(({ path }) => path.replaceAll("\\", "/") !== "src/lib/audit/server.ts")) assert.doesNotMatch(entry.content, /from\("audit_logs"\)\.insert/, entry.path);
+});
+
+test("invoice number repair avoids ambiguous fiscal_year references", async () => {
+  const migration = await file("supabase/migrations/027_fix_invoice_fiscal_year_ambiguity.sql");
+  const functionBody = migration.slice(migration.indexOf("create or replace function public.create_invoice_from_quote"));
+  const withoutRequiredInsertColumn = functionBody.replace("(company_id, fiscal_year, next_number)", "");
+
+  assert.match(functionBody, /returns uuid[\s\S]*security definer[\s\S]*set search_path = public/);
+  assert.match(functionBody, /target_fiscal_year integer := extract\(year from current_date\)::integer/);
+  assert.match(functionBody, /insert into public\.invoice_number_counters as counters \(company_id, fiscal_year, next_number\)/);
+  assert.match(functionBody, /values \(target_company_id, target_fiscal_year, 2\)[\s\S]*on conflict on constraint invoice_number_counters_pkey[\s\S]*counters\.next_number/);
+  assert.match(functionBody, /'F-' \|\| target_fiscal_year::text/);
+  assert.doesNotMatch(withoutRequiredInsertColumn, /(?<![._])\bfiscal_year\b/);
+  assert.match(functionBody, /invoice\.created_from_quote/);
+});
+
+test("draft quote updates use one tenant-scoped atomic RPC with server-side totals", async () => {
+  const migration = await file("supabase/migrations/022_atomic_draft_quote_updates.sql");
+  const route = await file("src/app/api/v1/companies/[companyId]/quotes/[quoteId]/route.ts");
+  const editor = await file("src/features/quotes/components/quote-editor.tsx");
+
+  assert.match(migration, /create or replace function public\.update_draft_quote/);
+  assert.match(migration, /security definer/);
+  assert.match(migration, /auth\.uid\(\) is null/);
+  assert.match(migration, /has_company_role\(target_company_id, array\['owner', 'employee'\]/);
+  assert.match(migration, /id = target_quote_id[\s\S]*company_id = target_company_id[\s\S]*for update/);
+  assert.match(migration, /quote_record\.status <> 'draft'/);
+  assert.match(migration, /coalesce\(jsonb_typeof\(draft_items\), ''\) <> 'array'/);
+  assert.match(migration, /item_quantity <= 0/);
+  assert.match(migration, /item_price_cents < 0/);
+  assert.match(migration, /vat_subtotals/);
+  assert.match(migration, /delete from public\.quote_items[\s\S]*insert into public\.quote_items[\s\S]*update public\.quotes/);
+  assert.doesNotMatch(migration, /exception\s+when/i);
+  assert.match(migration, /grant execute on function public\.update_draft_quote[\s\S]* to authenticated/);
+  assert.match(route, /rpc\("update_draft_quote"/);
+  assert.doesNotMatch(route, /from\("quote_items"\)\.(delete|insert)/);
+  assert.doesNotMatch(route, /from\("quotes"\)\.update/);
+  assert.match(route, /draft_items: input\.data\.items/);
+  const inputSchema = route.slice(route.indexOf("const inputSchema"), route.indexOf("export async"));
+  assert.doesNotMatch(inputSchema, /subtotal|tax|total/i);
+  assert.match(editor, /subtotalsByVatRate/);
+});
+
+test("only draft quotes render editing controls while immutable snapshots stay separate", async () => {
+  const page = await file("src/app/(app)/app/[companySlug]/quotes/[quoteId]/page.tsx");
+  const invoices = await file("supabase/migrations/010_invoices.sql");
+
+  assert.match(page, /quote\.status === "draft" \? <div className="mt-4"><QuoteEditor/);
+  assert.match(page, /quote\.status === "draft" \? "Offerte aanpassen" : "Regels"/);
+  assert.match(invoices, /insert into public\.invoice_items[\s\S]*select new_invoice_id, position, description, quantity, unit, unit_price_cents, vat_rate, line_total_cents from public\.quote_items/);
+});
+
 test("catalog archiving preserves VAT snapshots and prevents future AI quote selection", async () => {
   const catalogRoute = await file("src/app/api/v1/companies/[companyId]/catalog/[productId]/route.ts");
   const imageMigration = await file("supabase/migrations/019_catalog_product_image_storage.sql");
@@ -244,17 +331,142 @@ test("storage provisioning concept keeps document and image bucket contracts sep
 test("public quote routes reject malformed input without provider error details", async () => {
   const route = await file("src/app/api/public/quotes/[token]/route.ts");
   const page = await file("src/app/offerte/[token]/page.tsx");
-  assert.match(route, /const tokenSchema = z\.string\(\)\.uuid\(\)/);
+  assert.match(route, /const tokenSchema = z\.string\(\)\.regex\(\/\^\[a-f0-9\]\{64\}\$\/i\)/);
   assert.match(route, /z\.literal\("question"\), comment: z\.string\(\)\.trim\(\)\.min\(2\)\.max\(2000\)/);
   assert.doesNotMatch(route, /error\?\.message/);
-  assert.match(page, /z\.string\(\)\.uuid\(\)\.safeParse\(token\)/);
+  assert.match(page, /z\.string\(\)\.regex\(\/\^\[a-f0-9\]\{64\}\$\/i\)\.safeParse\(token\)/);
 });
 
-test("a public token selects exactly one unexpired quote and exposes no internal quote id", async () => {
-  const migration = await file("supabase/migrations/015_public_quote_security_hardening.sql");
-  assert.match(migration, /where q\.public_token = token[\s\S]*q\.public_token_expires_at > now\(\)/);
+test("WP6.1A resets raw customer links and uses only token hashes", async () => {
+  const migration = await file("supabase/migrations/023_quote_delivery_and_hashed_public_tokens.sql");
+  const route = await file("src/app/api/public/quotes/[token]/route.ts");
+  const page = await file("src/app/offerte/[token]/page.tsx");
+
+  assert.match(migration, /add column if not exists public_token_hash text unique/);
+  assert.match(migration, /public_token = null,[\s\S]*public_token_hash = null,[\s\S]*public_token_expires_at = null,[\s\S]*public_token_revoked_at = now\(\)/);
+  assert.match(migration, /encode\(gen_random_bytes\(32\), 'hex'\)/);
+  assert.match(migration, /encode\(digest\(raw_token, 'sha256'\), 'hex'\)/);
+  assert.match(migration, /public_token_hash = public\.hash_public_quote_token\(raw_token\)/);
+  assert.match(migration, /public_token_revoked_at is null/);
+  assert.match(migration, /revoke all on function public\.get_public_quote\(uuid\)/);
+  assert.match(migration, /create or replace function public\.rotate_public_quote_token/);
+  assert.match(migration, /create or replace function public\.revoke_public_quote_token/);
+  assert.match(migration, /set public_token = null,[\s\S]*public_token_hash = null,[\s\S]*public_token_revoked_at = now\(\)/);
+  assert.match(route, /raw_token: token/);
+  assert.match(page, /raw_token: token/);
+});
+
+test("WP6.1A repair qualifies pgcrypto calls without changing token RPC contracts", async () => {
+  const migration = await file("supabase/migrations/025_fix_pgcrypto_schema_qualification.sql");
+
+  assert.match(migration, /create or replace function public\.hash_public_quote_token\(raw_token text\)[\s\S]*extensions\.digest\(raw_token::text, 'sha256'::text\)/);
+  assert.match(migration, /create or replace function public\.publish_quote_for_customer\([\s\S]*target_quote_id uuid,[\s\S]*target_company_id uuid,[\s\S]*expiry_days integer default 30[\s\S]*security definer[\s\S]*set search_path = public[\s\S]*extensions\.gen_random_bytes\(32::integer\)/);
+  assert.match(migration, /create or replace function public\.rotate_public_quote_token\([\s\S]*target_quote_id uuid,[\s\S]*target_company_id uuid,[\s\S]*expiry_days integer default 30[\s\S]*security definer[\s\S]*set search_path = public[\s\S]*extensions\.gen_random_bytes\(32::integer\)/);
+  assert.doesNotMatch(migration, /create or replace function public\.(get_public_quote|customer_decide_quote|customer_question_quote|reserve_quote_email_delivery)/);
+});
+
+test("repair migration restores only missing quote-delivery schema objects without raw-token fallback", async () => {
+  const migration = await file("supabase/migrations/026_repair_quote_delivery_schema_objects.sql");
+  const pgcryptoRepair = await file("supabase/migrations/025_fix_pgcrypto_schema_qualification.sql");
+
+  assert.match(migration, /add column if not exists public_token_hash text/);
+  assert.match(migration, /add column if not exists public_token_revoked_at timestamptz/);
+  assert.match(migration, /create table if not exists public\.quote_email_deliveries/);
+  assert.match(migration, /unique \(quote_id, delivery_type, idempotency_key\)/);
+  assert.match(migration, /on conflict \(quote_id, delivery_type, idempotency_key\) do nothing/);
+  assert.match(migration, /public_token_hash = public\.hash_public_quote_token\(generated_token\)/);
+  assert.match(migration, /public_token_hash = public\.hash_public_quote_token\(raw_token\)/);
+  assert.match(migration, /to_regprocedure\('public\.rotate_public_quote_token\(uuid,uuid,integer\)'\) is null/);
+  assert.match(migration, /grant execute on function public\.complete_quote_email_delivery\(uuid, uuid, text\) to service_role/);
+  assert.match(pgcryptoRepair, /extensions\.digest\(raw_token::text, 'sha256'::text\)/);
+  assert.match(pgcryptoRepair, /extensions\.gen_random_bytes\(32::integer\)/);
+  assert.doesNotMatch(migration, /public_token\s*=\s*generated_token/);
+  assert.doesNotMatch(migration, /where q\.public_token\s*=/);
+});
+
+test("WP6.1A validates quote company ownership before publishing and audits the validated tenant", async () => {
+  const publish = await file("src/app/api/v1/companies/[companyId]/quotes/[quoteId]/publish/route.ts");
+  const email = await file("src/app/api/v1/companies/[companyId]/quotes/[quoteId]/email/route.ts");
+  const migration = await file("supabase/migrations/023_quote_delivery_and_hashed_public_tokens.sql");
+
+  assert.match(publish, /eq\("id", quoteId\)\.eq\("company_id", companyId\)/);
+  assert.match(publish, /target_company_id: quote\.company_id/);
+  assert.match(publish, /company_id: quote\.company_id/);
+  assert.match(email, /eq\("id", quoteId\)\.eq\("company_id", companyId\)/);
+  assert.match(migration, /where id = target_quote_id and company_id = target_company_id/);
+  assert.match(migration, /Quote not found for this company/);
+});
+
+test("WP6.1A records idempotent Resend deliveries without storing raw tokens", async () => {
+  const migration = await file("supabase/migrations/023_quote_delivery_and_hashed_public_tokens.sql");
+  const emailRoute = await file("src/app/api/v1/companies/[companyId]/quotes/[quoteId]/email/route.ts");
+  const remindRoute = await file("src/app/api/v1/companies/[companyId]/quotes/[quoteId]/remind/route.ts");
+  const sender = await file("src/features/quotes/infrastructure/send-quote-email.ts");
+
+  assert.match(migration, /create table if not exists public\.quote_email_deliveries/);
+  assert.match(migration, /unique \(quote_id, delivery_type, idempotency_key\)/);
+  assert.match(migration, /status text not null check \(status in \('pending', 'sent', 'failed'\)\)/);
+  assert.match(migration, /provider_message_id text/);
+  assert.match(migration, /tenant quote email deliveries read/);
+  assert.match(migration, /on conflict \(quote_id, delivery_type, idempotency_key\) do nothing/);
+  assert.match(migration, /'shouldSend', false/);
+  assert.match(migration, /set status = 'failed', error_code/);
+  assert.match(migration, /set status = 'sent', provider_message_id/);
+  assert.match(migration, /Only the mail service may complete a delivery/);
+  assert.match(migration, /grant execute on function public\.complete_quote_email_delivery\(uuid, uuid, text\) to service_role/);
+  assert.match(emailRoute, /Idempotency-Key/);
+  assert.match(remindRoute, /Idempotency-Key/);
+  assert.match(sender, /if \(!reserved\.shouldSend\) \{/);
+  assert.match(sender, /provider_message: providerData\.id/);
+  assert.match(sender, /admin = createAdminClient\(\)/);
+  assert.doesNotMatch(sender, /metadata.*rawToken|rawToken.*metadata/s);
+});
+
+test("WP6.1A safely escapes HTML email and also renders plain text", () => {
+  const email = createQuoteEmail({
+    type: "initial",
+    recipientName: "<script>alert(1)</script>",
+    companyName: "A & B <bedrijf>",
+    quoteNumber: "Q-1",
+    quoteTitle: "<b>Werk</b>",
+    publicUrl: "https://example.test/offerte/" + "a".repeat(64),
+  });
+
+  assert.match(email.html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+  assert.match(email.html, /A &amp; B &lt;bedrijf&gt;/);
+  assert.doesNotMatch(email.text, /<script>|<b>|<bedrijf>/);
+  assert.match(email.text, /Bekijk offerte: https:\/\/example\.test\/offerte\//);
+});
+
+test("WP6.1A logs one public decision and bounds public questions per hashed token", async () => {
+  const migration = await file("supabase/migrations/023_quote_delivery_and_hashed_public_tokens.sql");
+  const decisionFunction = migration.slice(migration.indexOf("create or replace function public.customer_decide_quote(\n  raw_token text"), migration.indexOf("create or replace function public.customer_question_quote"));
+  const auditInsert = decisionFunction.slice(decisionFunction.indexOf("insert into public.audit_logs"));
+
+  assert.match(decisionFunction, /status = 'sent'[\s\S]*returning id, company_id into decided_quote/);
+  assert.match(decisionFunction, /'quote\.accepted'/);
+  assert.match(decisionFunction, /'quote\.rejected'/);
+  assert.match(decisionFunction, /jsonb_build_object\('source', 'public_quote'\)/);
+  assert.doesNotMatch(auditInsert, /customer_comment|raw_token|comment/);
+  assert.match(migration, /questions_last_hour >= 3 or questions_total >= 20/);
+  assert.match(migration, /for update/);
+  assert.match(migration, /public_token_hash = public\.hash_public_quote_token\(raw_token\)/);
+});
+
+test("a hashed public token selects exactly one unrevoked quote and exposes no internal quote id", async () => {
+  const migration = await file("supabase/migrations/023_quote_delivery_and_hashed_public_tokens.sql");
+  const publicPage = await file("src/app/offerte/[token]/page.tsx");
+  const internalPage = await file("src/app/(app)/app/[companySlug]/quotes/[quoteId]/page.tsx");
+  const editor = await file("src/features/quotes/components/quote-editor.tsx");
+  assert.match(migration, /where q\.public_token_hash = public\.hash_public_quote_token\(raw_token\)[\s\S]*q\.public_token_expires_at > now\(\)/);
+  assert.match(migration, /q\.public_token_revoked_at is null/);
   assert.match(migration, /where qi\.quote_id = q\.id/);
   assert.doesNotMatch(migration, /'id', q\.id/);
+  assert.doesNotMatch(migration, /'notes', q\.notes/);
+  assert.doesNotMatch(publicPage, /quote\.notes|notes: string \| null|>Toelichting</);
+  assert.match(internalPage, /select\("id,quote_number,title,status,notes,/);
+  assert.match(internalPage, /initialNotes=\{quote\.notes\}/);
+  assert.match(editor, /body: JSON\.stringify\(\{ title, notes: notes \|\| null, items \}\)/);
   assert.doesNotMatch(migration, /customerComment/);
 });
 

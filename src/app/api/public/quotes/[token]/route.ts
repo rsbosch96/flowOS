@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 
-const tokenSchema = z.string().uuid();
+const tokenSchema = z.string().regex(/^[a-f0-9]{64}$/i);
 const inputSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("accepted"), comment: z.string().trim().max(2000).optional() }),
   z.object({ action: z.literal("rejected"), comment: z.string().trim().max(2000).optional() }),
@@ -27,8 +27,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
   const supabase = await createClient();
   const { action, comment } = parsed.data;
   const { data, error } = action === "question"
-    ? await supabase.rpc("customer_question_quote", { token, question: comment })
-    : await supabase.rpc("customer_decide_quote", { token, decision: action, comment: comment ?? null });
+    ? await supabase.rpc("customer_question_quote", { raw_token: token, question: comment })
+    : await supabase.rpc("customer_decide_quote", { raw_token: token, decision: action, comment: comment ?? null });
 
   if (error || !data) {
     return NextResponse.json({ error: { message: "Deze offertelink is niet beschikbaar." } }, { status: 404 });
