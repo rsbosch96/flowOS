@@ -81,6 +81,7 @@
   "companyProfile.name": "Bedrijfsnaam",
   "companyProfile.kvk": "KvK-nummer",
   "companyProfile.vat": "Btw-nummer",
+  "companyProfile.iban": "IBAN",
   "companyProfile.logo": "Logo-URL",
   "companyProfile.street": "Straat en huisnummer",
   "companyProfile.postalCode": "Postcode",

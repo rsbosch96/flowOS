@@ -206,6 +206,33 @@ test("invoice number repair avoids ambiguous fiscal_year references", async () =
   assert.match(functionBody, /invoice\.created_from_quote/);
 });
 
+test("WP7.2B.1 blocks new invoices without mandatory company and customer details", async () => {
+  const migration = await file("supabase/migrations/028_require_invoice_party_details.sql");
+  const route = await file("src/app/api/v1/companies/[companyId]/quotes/[quoteId]/invoice/route.ts");
+  const profileRoute = await file("src/app/api/v1/companies/[companyId]/profile/route.ts");
+  const profilePage = await file("src/app/(app)/app/[companySlug]/settings/company-profile/page.tsx");
+  const profileForm = await file("src/features/company-profile/components/company-profile-form.tsx");
+
+  assert.match(migration, /security definer[\s\S]*set search_path = public/);
+  assert.match(migration, /has_company_role\(target_company_id, array\['owner', 'employee'\]/);
+  assert.match(migration, /where id = target_quote_id and company_id = target_company_id[\s\S]*for update/);
+  assert.match(migration, /if found then return new_invoice_id; end if;[\s\S]*company_iban_value/);
+  assert.match(migration, /'company_kvk'/);
+  assert.match(migration, /'company_vat_number'/);
+  assert.match(migration, /'company_iban'/);
+  assert.match(migration, /'company_street'/);
+  assert.match(migration, /'customer_name'/);
+  assert.match(migration, /'customer_street'/);
+  assert.match(migration, /message = 'INVOICE_PARTY_DETAILS_MISSING'/);
+  assert.ok(migration.indexOf("message = 'INVOICE_PARTY_DETAILS_MISSING'") < migration.indexOf("insert into public.invoice_number_counters"));
+  assert.match(route, /error\?\.code === "P0001" && error\.message === "INVOICE_PARTY_DETAILS_MISSING"/);
+  assert.match(route, /status: 422/);
+  assert.match(profileRoute, /iban: optionalText\(34\)/);
+  assert.match(profileRoute, /iban: emptyToNull\(input\.data\.iban\)/);
+  assert.match(profilePage, /kvk_number,vat_number,iban,address/);
+  assert.match(profileForm, /companyProfile\.iban/);
+});
+
 test("draft quote updates use one tenant-scoped atomic RPC with server-side totals", async () => {
   const migration = await file("supabase/migrations/022_atomic_draft_quote_updates.sql");
   const route = await file("src/app/api/v1/companies/[companyId]/quotes/[quoteId]/route.ts");
