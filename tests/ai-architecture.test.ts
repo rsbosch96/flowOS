@@ -508,6 +508,70 @@ test("AI admin mutations require service role and the initiating tenant membersh
   assert.match(migration, /grant execute on function public\.start_ai_run[\s\S]* to service_role/);
 });
 
+test("WP13.2B hardens SECURITY DEFINER privileges without changing function bodies", async () => {
+  const migration = await file("supabase/migrations/029_harden_security_definer_privileges.sql");
+  const publicCapabilities = [
+    "get_public_quote(text)",
+    "customer_decide_quote(text, public.quote_status, text)",
+    "customer_question_quote(text, text)",
+  ];
+  const authenticatedOnly = [
+    "add_company_member_by_email(uuid, text, public.company_role)",
+    "bootstrap_company(text, text)",
+    "create_ai_quote_draft(uuid, text, text, text, text, jsonb)",
+    "create_invoice_from_quote(uuid, uuid)",
+    "publish_quote_for_customer(uuid, uuid, integer)",
+    "reserve_quote_email_delivery(uuid, uuid, text, text, uuid)",
+    "revoke_public_quote_token(uuid, uuid)",
+    "rotate_public_quote_token(uuid, uuid, integer)",
+    "transition_invoice_status(uuid, uuid, text, text)",
+    "update_draft_quote(uuid, uuid, text, text, jsonb)",
+    "has_company_role(uuid, public.company_role[])",
+    "is_company_member(uuid)",
+  ];
+  const serviceOnly = [
+    "complete_quote_email_delivery(uuid, uuid, text)",
+    "fail_quote_email_delivery(uuid, uuid, text)",
+    "finish_ai_run(uuid, public.ai_run_status, uuid, text, text, integer, integer, integer, integer, integer, character, text, text)",
+    "start_ai_run(uuid, uuid, text, text, jsonb, text, text)",
+  ];
+  const droppedLegacy = [
+    "customer_decide_quote(uuid, public.quote_status, text)",
+    "customer_question_quote(uuid, text)",
+    "finish_ai_run(uuid, public.ai_run_status, uuid, text, integer, integer, text)",
+    "get_public_quote(uuid)",
+    "publish_quote_for_customer(uuid, integer)",
+    "start_ai_run(uuid, text, text)",
+  ];
+
+  for (const signature of [...publicCapabilities, ...authenticatedOnly, ...serviceOnly, "create_company_defaults()"]) {
+    const escaped = signature.replace(/[()[\].+?^${}|]/g, "\\$&").replaceAll("*", "\\*");
+    assert.match(migration, new RegExp(`alter function public\\.${escaped} set search_path = public, pg_temp`));
+    assert.match(migration, new RegExp(`revoke all on function public\\.${escaped} from public, anon, authenticated, service_role`));
+  }
+  for (const signature of publicCapabilities) {
+    const escaped = signature.replace(/[()[\].+?^${}|]/g, "\\$&").replaceAll("*", "\\*");
+    assert.match(migration, new RegExp(`grant execute on function public\\.${escaped} to anon, authenticated`));
+  }
+  for (const signature of authenticatedOnly) {
+    const escaped = signature.replace(/[()[\].+?^${}|]/g, "\\$&").replaceAll("*", "\\*");
+    assert.match(migration, new RegExp(`grant execute on function public\\.${escaped} to authenticated`));
+    assert.doesNotMatch(migration, new RegExp(`grant execute on function public\\.${escaped} to anon`));
+  }
+  for (const signature of serviceOnly) {
+    const escaped = signature.replace(/[()[\].+?^${}|]/g, "\\$&").replaceAll("*", "\\*");
+    assert.match(migration, new RegExp(`grant execute on function public\\.${escaped} to service_role`));
+    assert.doesNotMatch(migration, new RegExp(`grant execute on function public\\.${escaped} to (anon|authenticated)`));
+  }
+  for (const signature of droppedLegacy) {
+    const escaped = signature.replace(/[()[\].+?^${}|]/g, "\\$&").replaceAll("*", "\\*");
+    assert.match(migration, new RegExp(`drop function if exists public\\.${escaped}`));
+  }
+  assert.doesNotMatch(migration, /drop function[\s\S]*?cascade/i);
+  assert.doesNotMatch(migration, /create or replace function/i);
+  assert.doesNotMatch(migration, /grant execute on function public\.create_company_defaults/);
+});
+
 test("service-role credentials are not imported by client components", async () => {
   const clientFiles = await sourceFiles("src");
   const contents = await Promise.all(clientFiles.map(async (path) => ({ path, content: await file(path) })));
@@ -577,4 +641,45 @@ test("NULL costs remain fail-closed in the architectural budget contract", async
   assert.equal(snapshot.status, "unknown");
   assert.match(documentation, /mag nooit als nul/i);
   assert.match(documentation, /geen nieuwe betaalde provider-aanroep/i);
+});
+
+test("WP13.3 validates conversation tenancy in routes and at the database boundary", async () => {
+  const route = await file("src/app/api/v1/companies/[companyId]/conversations/[conversationId]/route.ts");
+  const detailPage = await file("src/app/(app)/app/[companySlug]/conversations/[conversationId]/page.tsx");
+  const migration = await file("supabase/migrations/030_enforce_conversation_tenant_integrity.sql");
+  const publicQuestion = await file("supabase/migrations/023_quote_delivery_and_hashed_public_tokens.sql");
+
+  // A company member can only resolve a conversation through its joint tenant key.
+  assert.match(detailPage, /\.eq\("id", conversationId\)\.eq\("company_id", company\.id\)/);
+  assert.match(route, /supabase\.auth\.getUser\(\)/);
+  assert.match(route, /\.from\("company_memberships"\)[\s\S]*?\.eq\("company_id", companyId\)[\s\S]*?\.eq\("user_id", user\.id\)/);
+  assert.match(route, /\.from\("conversations"\)[\s\S]*?\.eq\("id", conversationId\)[\s\S]*?\.eq\("company_id", companyId\)/);
+  assert.match(route, /code: "CONVERSATION_NOT_FOUND"/);
+
+  // A manipulated body cannot select a tenant; inserts only use the validated record.
+  assert.doesNotMatch(route, /company_id:\s*input\.data/);
+  assert.match(route, /conversation_id: access\.conversation\.id/);
+  assert.match(route, /company_id: access\.conversation\.company_id/);
+  assert.doesNotMatch(route, /createAdminClient|SUPABASE_SERVICE_ROLE_KEY|SUPABASE_SECRET_KEY/);
+
+  // Both writes use the joint validated key and an update must affect one row.
+  assert.match(route, /\.eq\("id", access\.conversation\.id\)[\s\S]*?\.eq\("company_id", access\.conversation\.company_id\)/);
+  assert.match(route, /updatedConversation\?\.length !== 1/);
+  assert.match(route, /code: "CONVERSATION_UPDATE_FAILED"/);
+  assert.doesNotMatch(route, /membership\.role === "technician"/);
+
+  // The migration aborts on legacy corruption, preserves records, and adds the composite invariant.
+  assert.match(migration, /CONVERSATION_TENANT_INTEGRITY_ORPHANS_FOUND/);
+  assert.match(migration, /CONVERSATION_TENANT_INTEGRITY_MISMATCHES_FOUND/);
+  assert.match(migration, /add constraint conversations_id_company_id_key unique \(id, company_id\)/);
+  assert.match(migration, /drop constraint if exists conversation_messages_conversation_id_fkey/);
+  assert.match(migration, /foreign key \(conversation_id, company_id\)[\s\S]*?references public\.conversations \(id, company_id\)/);
+  assert.match(migration, /on update no action[\s\S]*?on delete cascade/);
+  assert.match(migration, /create index if not exists conversation_messages_conversation_company_idx/);
+  assert.doesNotMatch(migration, /drop\s+(?:constraint|table|function)[^;]*\bcascade\b/i);
+  assert.doesNotMatch(migration, /delete\s+from\s+public\.conversation_messages/i);
+  assert.doesNotMatch(migration, /disable row level security/i);
+
+  // Public quote questions derive both values from the same validated quote record.
+  assert.match(publicQuestion, /conversation_id,[\s\S]*?target_quote\.company_id,[\s\S]*?'inbound'/);
 });
