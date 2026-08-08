@@ -25,6 +25,7 @@ export class AiValidationError extends AiError { readonly code = AiErrorCode.Val
 export class AiRateLimitError extends AiError { readonly code = AiErrorCode.RateLimit; }
 export class AiTimeoutError extends AiError { readonly code = AiErrorCode.Timeout; }
 export class AiBudgetStatusUnknownError extends AiError { readonly code = AiErrorCode.BudgetStatusUnknown; }
+export class AiSpikeLimitError extends AiError { readonly code = AiErrorCode.BudgetExceeded; }
 export class AiStorageError extends AiError { readonly code = AiErrorCode.Unknown; }
 export class AiRunError extends AiError { readonly code = AiErrorCode.Unknown; }
 

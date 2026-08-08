@@ -1,4 +1,4 @@
-import { calculateAiCost } from "./costs.ts";
+import { calculateAiCostDetails } from "./costs.ts";
 import { getAiErrorCode } from "./errors.ts";
 import type { AiPersistence, AiPersistenceResult, AiProvider, AiProviderName, AiRequest, AiResult } from "./types";
 
@@ -14,13 +14,18 @@ export type AiRunRepository = {
     outputTokens?: number;
     totalTokens?: number;
     estimatedCostCents?: number | null;
+    estimatedCostUsdMicros?: number | null;
     currency: "EUR";
     durationMs: number;
     errorCode?: string;
   }): Promise<void>;
 };
 
-export type GatewayDependencies = { provider: AiProvider; runs: AiRunRepository };
+export type GatewayDependencies = {
+  provider: AiProvider;
+  runs: AiRunRepository;
+  beforeProvider?: (input: { request: AiRequest<unknown>; runId: string }) => Promise<void>;
+};
 
 export async function executeAiRun<T>(
   request: AiRequest<T>,
@@ -31,10 +36,11 @@ export async function executeAiRun<T>(
   const startedAt = Date.now();
 
   try {
+    await dependencies.beforeProvider?.({ request, runId });
     const generated = await dependencies.provider.generate(request);
     const stored: AiPersistenceResult = persist ? await persist({ data: generated.data, runId }) : {};
     const durationMs = Date.now() - startedAt;
-    const cost = calculateAiCost({ model: generated.model, usage: generated.usage });
+    const cost = calculateAiCostDetails({ model: generated.model, usage: generated.usage });
     await dependencies.runs.finish({
       runId,
       status: "succeeded",
@@ -45,6 +51,7 @@ export async function executeAiRun<T>(
       outputTokens: generated.usage.outputTokens,
       totalTokens: generated.usage.totalTokens,
       estimatedCostCents: cost.estimatedCostCents,
+      estimatedCostUsdMicros: cost.estimatedCostUsdMicros,
       currency: cost.currency,
       durationMs,
     });

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import test from "node:test";
-import { calculateAiCost } from "../src/ai/costs.ts";
+import { calculateAiCost, calculateAiCostDetails } from "../src/ai/costs.ts";
 import { AiBudgetStatus, type AiBudgetCostSnapshot } from "../src/ai/types.ts";
 import { AiBudgetStatusUnknownError, AiErrorCode, AiRateLimitError, AiTimeoutError, getAiErrorCode } from "../src/ai/errors.ts";
 import { executeAiRun } from "../src/ai/gateway-core.ts";
@@ -117,6 +117,67 @@ test("gateway records EUR-normalized cost metadata for every completed run", asy
   assert.equal(finished[0]?.provider, "openai");
   assert.equal(finished[0]?.estimatedCostCents, 100);
   assert.equal(finished[0]?.currency, "EUR");
+});
+
+test("RC1 cost details retain both USD and EUR values without inventing a tariff", () => {
+  const cost = calculateAiCostDetails({
+    model: "gpt-5.6-luna",
+    usage: { inputTokens: 1_000_000, outputTokens: 500_000 },
+    pricing: { "gpt-5.6-luna": { inputUsdPerMillionTokens: 1, outputUsdPerMillionTokens: 6 } },
+    usdEurRate: 0.9,
+  });
+  assert.deepEqual(cost, { estimatedCostCents: 360, estimatedCostUsdMicros: 4_000_000, currency: "EUR" });
+});
+
+test("a provider failure cannot persist a half quote draft", async () => {
+  let persisted = false;
+  await assert.rejects(
+    executeAiRun(
+      defaultRequest,
+      {
+        provider: { name: "openai", generate: async () => { throw new AiRateLimitError("rate limited"); } },
+        runs: { start: async () => "run-no-draft", finish: async () => undefined },
+      },
+      async () => {
+        persisted = true;
+        return { quoteId: "must-not-exist" };
+      },
+    ),
+    AiRateLimitError,
+  );
+  assert.equal(persisted, false);
+});
+
+test("F1B keeps RC1 live safeguards server-side and leaves mock mode unrestricted", async () => {
+  const spike = await file("src/ai/rc1-spike.ts");
+  const provider = await file("src/ai/providers/openai-provider.ts");
+  const gateway = await file("src/ai/gateway.ts");
+  const env = await file(".env.example");
+
+  assert.match(provider, /if \(process\.env\.AI_MODE === "mock"\)[\s\S]*?return \{ data:/);
+  assert.match(provider, /const rc1Config = getRc1SpikeConfig\(model\);[\s\S]*?fetch\("https:\/\/api\.openai\.com\/v1\/responses"/);
+  assert.match(spike, /if \(maxCost\.estimatedCostCents === null \|\| maxCost\.estimatedCostUsdMicros === null\)[\s\S]*?AiConfigurationError/);
+
+  assert.match(spike, /const MAX_RC1_OUTPUT_TOKENS = 800/);
+  assert.match(spike, /boundedInteger\("AI_RC1_MAX_OUTPUT_TOKENS", MAX_RC1_OUTPUT_TOKENS, MAX_RC1_OUTPUT_TOKENS\)/);
+  assert.match(provider, /max_output_tokens: rc1Config\.maxOutputTokens/);
+  assert.match(spike, /const MAX_RC1_INPUT_TOKENS = 4_000/);
+  assert.match(spike, /const MAX_RC1_INPUT_BYTES = 3_600/);
+  assert.match(spike, /TextEncoder\(\)\.encode/);
+  assert.doesNotMatch(provider, /retry|for \(|while \(/i);
+
+  assert.match(spike, /const MAX_RC1_CALLS = 5/);
+  assert.match(spike, /attempts\.length >= config\.maxCalls/);
+  assert.match(spike, /knownSpentCents \+ maximumRemainingCents > config\.budgetCents/);
+  assert.match(gateway, /contains\("metadata", marker\)/);
+  assert.match(gateway, /rc1ProviderCallAttempted: true/);
+  assert.match(gateway, /reserveRc1ProviderCall[\s\S]*?beforeProvider/);
+
+  assert.match(env, /OPENAI_QUOTE_MODEL=gpt-5\.6-luna/);
+  assert.match(env, /"gpt-5\.6-luna":\{"inputUsdPerMillionTokens":1,"outputUsdPerMillionTokens":6\}/);
+  assert.match(env, /AI_RC1_MAX_OUTPUT_TOKENS=800/);
+  assert.match(env, /AI_RC1_MAX_CALLS=5/);
+  assert.match(env, /AI_RC1_SPIKE_BUDGET_CENTS=25/);
 });
 
 test("migration keeps quote storage atomic and catalog prices authoritative", async () => {

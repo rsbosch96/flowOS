@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { runAi } from "@/ai/gateway";
-import { AiConfigurationError, AiProviderError, AiRateLimitError, AiRunError, AiStorageError, AiTimeoutError, AiValidationError } from "@/ai/errors";
+import { AiConfigurationError, AiProviderError, AiRateLimitError, AiRunError, AiSpikeLimitError, AiStorageError, AiTimeoutError, AiValidationError } from "@/ai/errors";
 import { createQuoteSystemPrompt, generateQuoteSchema } from "@/ai/prompts/generate-quote";
 import { getOrganizationContext } from "@/i18n/organization-context";
 import { createClient } from "@/lib/supabase/server";
@@ -25,6 +25,7 @@ const normalizeCatalogName = (value: string, locale: Intl.LocalesArgument) => va
 
 function quoteGenerationFailure(error: unknown) {
   if (error instanceof AiConfigurationError) return { status: 503, code: "AI_CONFIGURATION_REQUIRED", message: "De AI-offerteassistent is nog niet volledig geconfigureerd." };
+  if (error instanceof AiSpikeLimitError) return { status: 429, code: "AI_SPIKE_LIMIT_REACHED", message: "De begrensde AI-testlimiet is bereikt. Probeer het niet opnieuw." };
   if (error instanceof AiRateLimitError) return { status: 429, code: "AI_RATE_LIMIT", message: "De AI-limiet is bereikt. Probeer het later opnieuw." };
   if (error instanceof AiTimeoutError) return { status: 504, code: "AI_TIMEOUT", message: "De AI-opdracht duurde te lang. Probeer het opnieuw." };
   if (error instanceof AiValidationError) return { status: 422, code: "AI_VALIDATION_FAILED", message: "De AI-uitvoer kon niet veilig als offerteconcept worden verwerkt." };

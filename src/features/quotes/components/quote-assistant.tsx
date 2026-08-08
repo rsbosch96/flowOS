@@ -9,6 +9,7 @@ import { getTranslations } from "@/i18n/get-translations";
 
 type QuoteGenerationErrorCode =
   | "AI_CONFIGURATION_REQUIRED"
+  | "AI_SPIKE_LIMIT_REACHED"
   | "AI_RATE_LIMIT"
   | "AI_TIMEOUT"
   | "AI_VALIDATION_FAILED"
@@ -21,6 +22,7 @@ function errorMessage(code: QuoteGenerationErrorCode | undefined) {
   const { t } = getTranslations();
   const keyByCode = {
     AI_CONFIGURATION_REQUIRED: "aiQuote.configurationRequired",
+    AI_SPIKE_LIMIT_REACHED: "aiQuote.rateLimit",
     AI_RATE_LIMIT: "aiQuote.rateLimit",
     AI_TIMEOUT: "aiQuote.timeout",
     AI_VALIDATION_FAILED: "aiQuote.validationFailed",
