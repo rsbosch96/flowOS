@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { logServerEvent, withApiRequest } from "@/lib/observability/server";
 import { createClient } from "@/lib/supabase/server";
 
 const inputSchema = z.object({
@@ -8,6 +9,7 @@ const inputSchema = z.object({
 });
 
 export async function PATCH(request: Request, { params }: { params: Promise<{ companyId: string; invoiceId: string }> }) {
+  return withApiRequest(request, { route: "/api/v1/companies/:companyId/invoices/:invoiceId/status" }, async (requestId) => {
   const input = inputSchema.safeParse(await request.json());
   if (!input.success) return NextResponse.json({ error: { message: "Ongeldige factuurstatus." } }, { status: 400 });
   const { companyId, invoiceId } = await params;
@@ -24,6 +26,10 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ co
     target_status: input.data.status,
     requested_void_reason: input.data.voidReason ?? null,
   });
-  if (error || !data) return NextResponse.json({ error: { message: "Deze statusovergang is niet toegestaan." } }, { status: 409 });
+  if (error || !data) {
+    logServerEvent({ level: "error", event: "invoice.status_transition_failed", requestId, route: "/api/v1/companies/:companyId/invoices/:invoiceId/status", companyId: invoice.company_id, actorId: user.id, errorCode: "INVOICE_STATUS_TRANSITION_FAILED" });
+    return NextResponse.json({ error: { message: "Deze statusovergang is niet toegestaan." } }, { status: 409 });
+  }
   return NextResponse.json({ ok: true });
+  });
 }

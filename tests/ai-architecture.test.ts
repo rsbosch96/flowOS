@@ -13,6 +13,8 @@ import { getTranslations } from "../src/i18n/get-translations.ts";
 import { getOrganizationContext } from "../src/i18n/organization-context.ts";
 import { createQuoteEmail } from "../src/features/quotes/infrastructure/quote-email-template.ts";
 import { calculateVatSpecification } from "../src/features/invoices/infrastructure/vat-specification.ts";
+import { readRuntimeConfig, RuntimeConfigError } from "../src/lib/config/runtime.ts";
+import { sanitizeLogContext } from "../src/lib/observability/sanitize.ts";
 
 const file = (path: string) => readFile(resolve(process.cwd(), path), "utf8");
 const defaultRequest = {
@@ -561,9 +563,11 @@ test("a hashed public token selects exactly one unrevoked quote and exposes no i
 
 test("AI admin mutations require service role and the initiating tenant membership", async () => {
   const admin = await file("src/lib/supabase/admin.ts");
+  const runtimeConfig = await file("src/lib/config/runtime.ts");
   const migration = await file("supabase/migrations/014_sprint_1_25_architecture_hardening.sql");
   assert.match(admin, /import "server-only"/);
-  assert.match(admin, /process\.env\.SUPABASE_SERVICE_ROLE_KEY/);
+  assert.match(admin, /getAdminSupabaseConfig/);
+  assert.match(runtimeConfig, /environment\.SUPABASE_SERVICE_ROLE_KEY/);
   assert.doesNotMatch(admin, /NEXT_PUBLIC_SUPABASE_(SERVICE_ROLE|SECRET)_KEY/);
   assert.match(migration, /auth\.role\(\) <> 'service_role'/);
   assert.match(migration, /company_id = target_company_id and user_id = target_initiated_by/);
@@ -884,4 +888,67 @@ test("WP13.4 keeps optional document customers tenant-bound in the route and dat
   assert.match(migration, /on update no action[\s\S]*?on delete set null \(customer_id\)/);
   assert.match(migration, /drop constraint if exists documents_customer_id_fkey/);
   assert.doesNotMatch(migration, /drop cascade/i);
+});
+
+test("OR1 health endpoint is read-only, bounded and never returns Supabase configuration", async () => {
+  const route = await file("src/app/api/health/route.ts");
+  const databaseCheck = await file("src/lib/health/server.ts");
+
+  assert.match(route, /export async function GET/);
+  assert.match(route, /status: "ok"/);
+  assert.match(route, /checks: \{ app: "ok", database: "ok" \}/);
+  assert.match(route, /status: 503/);
+  assert.match(route, /checks: \{ app: "ok", database: "error" \}/);
+  assert.match(route, /checkDatabaseHealth/);
+  assert.doesNotMatch(route, /SUPABASE_|OPENAI_|process\.env|project[-_]?ref|stack/i);
+  assert.match(databaseCheck, /AbortController/);
+  assert.match(databaseCheck, /HEALTH_TIMEOUT_MS = 2_000/);
+  assert.match(databaseCheck, /from\("companies"\)\.select\("id", \{ head: true, count: "exact" \}\)\.limit\(1\)/);
+  assert.doesNotMatch(databaseCheck, /\.insert\(|\.update\(|\.delete\(|\.rpc\(/);
+});
+
+test("OR1 logger keeps only structured operational fields and redacts sensitive context", () => {
+  const sanitized = sanitizeLogContext({ authorization: "Bearer secret", rawToken: "token", email: "person@example.test", requestId: "safe-id", nested: { signedUrl: "https://sensitive.example" } }) as Record<string, unknown>;
+  assert.equal(sanitized.authorization, "[REDACTED]");
+  assert.equal(sanitized.rawToken, "[REDACTED]");
+  assert.equal(sanitized.email, "[REDACTED]");
+  assert.equal(sanitized.requestId, "safe-id");
+  assert.deepEqual(sanitized.nested, { signedUrl: "[REDACTED]" });
+});
+
+test("OR1 accepts mock mode without live OpenAI configuration and rejects invalid configuration", () => {
+  const mock = readRuntimeConfig({
+    NEXT_PUBLIC_SUPABASE_URL: "https://example.supabase.co",
+    NEXT_PUBLIC_SUPABASE_ANON_KEY: "publishable-key",
+    AI_MODE: "mock",
+  });
+  assert.equal(mock.aiMode, "mock");
+  assert.throws(() => readRuntimeConfig({ NEXT_PUBLIC_SUPABASE_URL: "https://example.supabase.co", NEXT_PUBLIC_SUPABASE_ANON_KEY: "key", AI_MODE: "invalid" }), RuntimeConfigError);
+  assert.throws(() => readRuntimeConfig({ NEXT_PUBLIC_SUPABASE_URL: "https://example.supabase.co", NEXT_PUBLIC_SUPABASE_ANON_KEY: "key", AI_MODE: "live" }), RuntimeConfigError);
+});
+
+test("OR1 adds a request-id and safe structured error handling to critical routes", async () => {
+  const criticalRoutes = [
+    "src/app/api/v1/companies/[companyId]/quotes/generate/route.ts",
+    "src/app/api/v1/companies/[companyId]/quotes/[quoteId]/publish/route.ts",
+    "src/app/api/v1/companies/[companyId]/quotes/[quoteId]/email/route.ts",
+    "src/app/api/v1/companies/[companyId]/quotes/[quoteId]/invoice/route.ts",
+    "src/app/api/v1/companies/[companyId]/invoices/[invoiceId]/status/route.ts",
+    "src/app/api/v1/companies/[companyId]/conversations/[conversationId]/route.ts",
+    "src/app/api/v1/companies/[companyId]/documents/upload-url/route.ts",
+  ];
+  for (const path of criticalRoutes) {
+    const source = await file(path);
+    assert.match(source, /withApiRequest\(/, path);
+    assert.match(source, /logServerEvent\(/, path);
+  }
+
+  const observability = await file("src/lib/observability/server.ts");
+  const boundary = await file("src/app/error.tsx");
+  assert.match(observability, /x-request-id/);
+  assert.match(observability, /safeErrorResponse/);
+  assert.doesNotMatch(observability, /console\.error\(error\)/);
+  assert.match(boundary, /"use client"/);
+  assert.match(boundary, /Opnieuw proberen/);
+  assert.doesNotMatch(boundary, /error\.message|error\.stack/);
 });

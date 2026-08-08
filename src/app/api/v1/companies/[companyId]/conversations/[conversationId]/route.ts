@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
+import type { User } from "@supabase/supabase-js";
 import { z } from "zod";
+import { logServerEvent, withApiRequest } from "@/lib/observability/server";
 import { createClient } from "@/lib/supabase/server";
 
 const inputSchema = z.object({
@@ -9,7 +11,11 @@ const inputSchema = z.object({
 
 const statusSchema = z.object({ status: z.enum(["open", "pending", "resolved", "archived"]) });
 
-async function requireConversationAccess(companyId: string, conversationId: string) {
+type ConversationAccess =
+  | { error: NextResponse }
+  | { supabase: Awaited<ReturnType<typeof createClient>>; user: User; conversation: { id: string; company_id: string } };
+
+async function requireConversationAccess(companyId: string, conversationId: string): Promise<ConversationAccess> {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
 
@@ -51,6 +57,7 @@ async function requireConversationAccess(companyId: string, conversationId: stri
 }
 
 export async function POST(request: Request, { params }: { params: Promise<{ companyId: string; conversationId: string }> }) {
+  return withApiRequest(request, { route: "/api/v1/companies/:companyId/conversations/:conversationId" }, async (requestId) => {
   const input = inputSchema.safeParse(await request.json());
   if (!input.success) {
     return NextResponse.json({ error: { code: "INVALID_MESSAGE", message: "Schrijf eerst een bericht." } }, { status: 400 });
@@ -69,6 +76,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ com
   });
 
   if (messageError) {
+    logServerEvent({ level: "error", event: "conversation.message_save_failed", requestId, route: "/api/v1/companies/:companyId/conversations/:conversationId", companyId: access.conversation.company_id, actorId: access.user.id, errorCode: "MESSAGE_SAVE_FAILED" });
     return NextResponse.json({ error: { code: "MESSAGE_SAVE_FAILED", message: "Bericht kon niet worden opgeslagen." } }, { status: 500 });
   }
 
@@ -80,6 +88,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ com
     .select("id");
 
   if (updateError) {
+    logServerEvent({ level: "error", event: "conversation.update_failed", requestId, route: "/api/v1/companies/:companyId/conversations/:conversationId", companyId: access.conversation.company_id, actorId: access.user.id, errorCode: "CONVERSATION_UPDATE_FAILED" });
     return NextResponse.json({ error: { code: "CONVERSATION_UPDATE_FAILED", message: "Aanvraag kon niet worden bijgewerkt." } }, { status: 500 });
   }
 
@@ -88,9 +97,11 @@ export async function POST(request: Request, { params }: { params: Promise<{ com
   }
 
   return NextResponse.json({ ok: true });
+  });
 }
 
 export async function PATCH(request: Request, { params }: { params: Promise<{ companyId: string; conversationId: string }> }) {
+  return withApiRequest(request, { route: "/api/v1/companies/:companyId/conversations/:conversationId" }, async (requestId) => {
   const input = statusSchema.safeParse(await request.json());
   if (!input.success) {
     return NextResponse.json({ error: { code: "INVALID_STATUS", message: "Ongeldige status." } }, { status: 400 });
@@ -108,6 +119,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ co
     .select("id");
 
   if (error) {
+    logServerEvent({ level: "error", event: "conversation.status_update_failed", requestId, route: "/api/v1/companies/:companyId/conversations/:conversationId", companyId: access.conversation.company_id, actorId: access.user.id, errorCode: "CONVERSATION_UPDATE_FAILED" });
     return NextResponse.json({ error: { code: "CONVERSATION_UPDATE_FAILED", message: "Status kon niet worden aangepast." } }, { status: 500 });
   }
 
@@ -116,4 +128,5 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ co
   }
 
   return NextResponse.json({ ok: true });
+  });
 }

@@ -4,6 +4,7 @@ import { runAi } from "@/ai/gateway";
 import { AiConfigurationError, AiProviderError, AiRateLimitError, AiRunError, AiSpikeLimitError, AiStorageError, AiTimeoutError, AiValidationError } from "@/ai/errors";
 import { createQuoteSystemPrompt, generateQuoteSchema } from "@/ai/prompts/generate-quote";
 import { getOrganizationContext } from "@/i18n/organization-context";
+import { logServerEvent, withApiRequest } from "@/lib/observability/server";
 import { createClient } from "@/lib/supabase/server";
 
 const freeInputSchema = z.object({
@@ -54,7 +55,8 @@ function buildConversationRequestText(subject: string | null, messages: Array<{ 
 }
 
 export async function POST(request: Request, { params }: { params: Promise<{ companyId: string }> }) {
-  let body: unknown;
+  return withApiRequest(request, { route: "/api/v1/companies/:companyId/quotes/generate" }, async (requestId) => {
+    let body: unknown;
   try {
     body = await request.json();
   } catch {
@@ -217,6 +219,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ com
     return NextResponse.json({ quoteId: result.quoteId, aiRunId: result.runId }, { status: 201 });
   } catch (error) {
     const failure = quoteGenerationFailure(error);
+    logServerEvent({ level: "error", event: "quote.generation_failed", requestId, route: "/api/v1/companies/:companyId/quotes/generate", companyId, actorId: user.id, errorCode: failure.code });
     return NextResponse.json({ error: { code: failure.code, message: failure.message } }, { status: failure.status });
   }
+  });
 }

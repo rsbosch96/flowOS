@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { logServerEvent, withApiRequest } from "@/lib/observability/server";
 import { createClient } from "@/lib/supabase/server";
 
 const inputSchema = z.object({ serviceDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) });
@@ -15,6 +16,7 @@ const invoiceDetailLabels: Record<string, string> = {
 };
 
 export async function POST(request: Request, { params }: { params: Promise<{ companyId: string; quoteId: string }> }) {
+  return withApiRequest(request, { route: "/api/v1/companies/:companyId/quotes/:quoteId/invoice" }, async (requestId) => {
   const input = inputSchema.safeParse(await request.json());
   if (!input.success || !isValidIsoDate(input.success ? input.data.serviceDate : "")) return NextResponse.json({ error: { code: "INVOICE_SERVICE_DATE_REQUIRED", message: "Vul een geldige leverdatum in." } }, { status: 422 });
 
@@ -38,6 +40,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ com
     return NextResponse.json({ error: { code: "INVOICE_PARTY_DETAILS_MISSING", message: `Vul eerst de ontbrekende factuurgegevens aan: ${missingFields.join(", ")}.`, fields: missingFields } }, { status: 422 });
   }
   if (error?.code === "P0001" && (error.message === "INVOICE_SERVICE_DATE_REQUIRED" || error.message === "INVOICE_SERVICE_DATE_INVALID")) return NextResponse.json({ error: { code: "INVOICE_SERVICE_DATE_REQUIRED", message: "Vul een geldige leverdatum in." } }, { status: 422 });
-  if (error || !invoiceId) return NextResponse.json({ error: { message: error?.message ?? "Factuur kon niet worden gemaakt." } }, { status: 409 });
+  if (error || !invoiceId) {
+    logServerEvent({ level: "error", event: "invoice.create_failed", requestId, route: "/api/v1/companies/:companyId/quotes/:quoteId/invoice", companyId: quote.company_id, actorId: user.id, errorCode: "INVOICE_CREATE_FAILED" });
+    return NextResponse.json({ error: { message: "Factuur kon niet worden gemaakt." } }, { status: 409 });
+  }
   return NextResponse.json({ invoiceId });
+  });
 }

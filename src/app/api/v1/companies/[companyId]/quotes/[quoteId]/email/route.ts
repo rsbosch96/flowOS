@@ -3,10 +3,12 @@ import { z } from "zod";
 import { sendQuoteEmail, type QuoteForDelivery } from "@/features/quotes/infrastructure/send-quote-email";
 import { createClient } from "@/lib/supabase/server";
 import { recordServerAuditEvent } from "@/lib/audit/server";
+import { logServerEvent, withApiRequest } from "@/lib/observability/server";
 
 const idempotencyKeySchema = z.string().uuid();
 
 export async function POST(request: Request, { params }: { params: Promise<{ companyId: string; quoteId: string }> }) {
+  return withApiRequest(request, { route: "/api/v1/companies/:companyId/quotes/:quoteId/email" }, async (requestId) => {
   const idempotencyKey = idempotencyKeySchema.safeParse(request.headers.get("Idempotency-Key"));
   if (!idempotencyKey.success) return NextResponse.json({ error: { message: "Ongeldige verzendpoging." } }, { status: 400 });
   const { companyId, quoteId } = await params;
@@ -20,7 +22,11 @@ export async function POST(request: Request, { params }: { params: Promise<{ com
   if (!['approved', 'sent'].includes(quote.status)) return NextResponse.json({ error: { message: "De offerte moet eerst goedgekeurd zijn." } }, { status: 409 });
 
   const result = await sendQuoteEmail({ supabase, companyId, quote: quote as unknown as QuoteForDelivery, deliveryType: "initial", idempotencyKey: idempotencyKey.data, origin: new URL(request.url).origin });
-  if (!result.ok) return NextResponse.json({ error: { message: result.message } }, { status: result.status });
+  if (!result.ok) {
+    logServerEvent({ level: "error", event: "quote.email_failed", requestId, route: "/api/v1/companies/:companyId/quotes/:quoteId/email", companyId: quote.company_id, actorId: user.id, errorCode: "QUOTE_EMAIL_FAILED" });
+    return NextResponse.json({ error: { message: result.message } }, { status: result.status });
+  }
   if (!result.duplicate) await recordServerAuditEvent({ companyId: quote.company_id, actorUserId: user.id, action: result.auditAction, entityType: "quote", entityId: quote.id, metadata: { delivery_id: result.deliveryId } });
   return NextResponse.json({ ok: true, idempotent: result.duplicate });
+  });
 }
