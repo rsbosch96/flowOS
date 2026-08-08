@@ -12,6 +12,7 @@ import { formatDate, formatMoney } from "../src/i18n/formatters.ts";
 import { getTranslations } from "../src/i18n/get-translations.ts";
 import { getOrganizationContext } from "../src/i18n/organization-context.ts";
 import { createQuoteEmail } from "../src/features/quotes/infrastructure/quote-email-template.ts";
+import { calculateVatSpecification } from "../src/features/invoices/infrastructure/vat-specification.ts";
 
 const file = (path: string) => readFile(resolve(process.cwd(), path), "utf8");
 const defaultRequest = {
@@ -193,7 +194,7 @@ test("WP7.2A locks invoices behind tenant-scoped RPCs, atomic numbering and immu
 });
 
 test("invoice number repair avoids ambiguous fiscal_year references", async () => {
-  const migration = await file("supabase/migrations/027_fix_invoice_fiscal_year_ambiguity.sql");
+  const migration = await file("supabase/migrations/20260805181835_027_fix_invoice_fiscal_year_ambiguity.sql");
   const functionBody = migration.slice(migration.indexOf("create or replace function public.create_invoice_from_quote"));
   const withoutRequiredInsertColumn = functionBody.replace("(company_id, fiscal_year, next_number)", "");
 
@@ -207,7 +208,7 @@ test("invoice number repair avoids ambiguous fiscal_year references", async () =
 });
 
 test("WP7.2B.1 blocks new invoices without mandatory company and customer details", async () => {
-  const migration = await file("supabase/migrations/028_require_invoice_party_details.sql");
+  const migration = await file("supabase/migrations/20260805181836_028_require_invoice_party_details.sql");
   const route = await file("src/app/api/v1/companies/[companyId]/quotes/[quoteId]/invoice/route.ts");
   const profileRoute = await file("src/app/api/v1/companies/[companyId]/profile/route.ts");
   const profilePage = await file("src/app/(app)/app/[companySlug]/settings/company-profile/page.tsx");
@@ -509,7 +510,7 @@ test("AI admin mutations require service role and the initiating tenant membersh
 });
 
 test("WP13.2B hardens SECURITY DEFINER privileges without changing function bodies", async () => {
-  const migration = await file("supabase/migrations/029_harden_security_definer_privileges.sql");
+  const migration = await file("supabase/migrations/20260805181837_029_harden_security_definer_privileges.sql");
   const publicCapabilities = [
     "get_public_quote(text)",
     "customer_decide_quote(text, public.quote_status, text)",
@@ -646,11 +647,11 @@ test("NULL costs remain fail-closed in the architectural budget contract", async
 test("WP13.3 validates conversation tenancy in routes and at the database boundary", async () => {
   const route = await file("src/app/api/v1/companies/[companyId]/conversations/[conversationId]/route.ts");
   const detailPage = await file("src/app/(app)/app/[companySlug]/conversations/[conversationId]/page.tsx");
-  const migration = await file("supabase/migrations/030_enforce_conversation_tenant_integrity.sql");
+  const migration = await file("supabase/migrations/20260805181838_030_enforce_conversation_tenant_integrity.sql");
   const publicQuestion = await file("supabase/migrations/023_quote_delivery_and_hashed_public_tokens.sql");
 
   // A company member can only resolve a conversation through its joint tenant key.
-  assert.match(detailPage, /\.eq\("id", conversationId\)\.eq\("company_id", company\.id\)/);
+  assert.match(detailPage, /\.eq\("id", conversationId\)[\s\S]*?\.eq\("company_id", company\.id\)/);
   assert.match(route, /supabase\.auth\.getUser\(\)/);
   assert.match(route, /\.from\("company_memberships"\)[\s\S]*?\.eq\("company_id", companyId\)[\s\S]*?\.eq\("user_id", user\.id\)/);
   assert.match(route, /\.from\("conversations"\)[\s\S]*?\.eq\("id", conversationId\)[\s\S]*?\.eq\("company_id", companyId\)/);
@@ -682,4 +683,114 @@ test("WP13.3 validates conversation tenancy in routes and at the database bounda
 
   // Public quote questions derive both values from the same validated quote record.
   assert.match(publicQuestion, /conversation_id,[\s\S]*?target_quote\.company_id,[\s\S]*?'inbound'/);
+});
+
+test("RC1 derives conversation quote input server-side and stores only catalog-backed draft items", async () => {
+  const route = await file("src/app/api/v1/companies/[companyId]/quotes/generate/route.ts");
+  const detailPage = await file("src/app/(app)/app/[companySlug]/conversations/[conversationId]/page.tsx");
+  const actions = await file("src/features/conversations/components/conversation-actions.tsx");
+  const migration = await file("supabase/migrations/20260805181839_031_ai_conversation_quote_draft.sql");
+  const customerReuseOverload = migration.slice(0, migration.indexOf("-- Keep free input compatible"));
+
+  // Only the conversation id is sent by the browser; all customer and request data is read server-side.
+  assert.match(actions, /JSON\.stringify\(\{ conversationId \}\)/);
+  assert.doesNotMatch(actions, /customerName|customerEmail|requestText/);
+  assert.match(route, /conversationInputSchema = z\.object\(\{ conversationId: z\.string\(\)\.uuid\(\) \}\)/);
+  assert.match(route, /\.from\("conversations"\)[\s\S]*?\.eq\("id", conversationInput\.data\.conversationId\)[\s\S]*?\.eq\("company_id", companyId\)/);
+  assert.match(route, /\.from\("customers"\)[\s\S]*?\.eq\("id", conversation\.customer_id\)[\s\S]*?\.eq\("company_id", companyId\)/);
+  assert.match(route, /\.from\("conversation_messages"\)[\s\S]*?\.eq\("conversation_id", conversation\.id\)[\s\S]*?\.eq\("company_id", conversation\.company_id\)[\s\S]*?\.in\("direction", \["inbound", "outbound"\]\)/);
+  assert.match(route, /buildConversationRequestText\(conversation\.subject, messages \?\? \[\]\)/);
+
+  // The UI hides it from technicians, while the route independently enforces the same role boundary.
+  assert.match(detailPage, /membership\?\.role === "owner" \|\| membership\?\.role === "employee"/);
+  assert.match(route, /!membership \|\| membership\.role === "technician"/);
+
+  // Only exact active catalog matches are forwarded to the draft RPC; unmatched AI text remains a warning.
+  assert.match(route, /catalogByName\.get\(normalizeCatalogName\(item\.catalogItemName \?\? item\.description/);
+  assert.match(route, /if \(!matchedCatalogItem\) return \[\]/);
+  assert.match(route, /Niet opgenomen \(geen exact actief catalogusproduct\)/);
+  assert.match(route, /if \(draftItems\.length === 0\) throw new AiValidationError/);
+  assert.doesNotMatch(route, /catalogItemId: matchedCatalogItem\?\.id \?\? null/);
+
+  // The new overload reuses a tenant-scoped customer, validates every catalog item, and gets prices from the catalog.
+  assert.match(migration, /create or replace function public\.create_ai_quote_draft\([\s\S]*?target_customer_id uuid/);
+  assert.match(migration, /where id = target_customer_id and company_id = target_company_id/);
+  assert.doesNotMatch(customerReuseOverload, /insert into public\.customers/);
+  assert.match(migration, /nullif\(item->>'catalogItemId', ''\) is null/);
+  assert.match(migration, /where id = requested_catalog_item_id and company_id = target_company_id and is_active = true/);
+  assert.match(migration, /catalog_item\.unit, catalog_item\.default_unit_price_cents, catalog_item\.default_vat_rate/);
+  assert.doesNotMatch(migration, /item_price_cents := 0/);
+  assert.match(migration, /security definer[\s\S]*?set search_path = public, pg_temp/);
+  assert.match(migration, /grant execute on function public\.create_ai_quote_draft\(uuid, uuid, text, text, jsonb\) to authenticated/);
+  assert.match(migration, /return public\.create_ai_quote_draft\([\s\S]*?new_customer_id/);
+
+  // Conversation flow calls the customer-reuse overload while free input retains its existing contract.
+  assert.match(route, /target_customer_id: source\.customerId/);
+  assert.match(route, /customer_name: source\.customerName/);
+  assert.match(actions, /router\.push/);
+  assert.match(actions, /quotes\/\$\{payload\.quoteId\}/);
+});
+
+test("RC1 mock output chooses an exact catalog name instead of a zero-price placeholder", async () => {
+  const provider = await file("src/ai/providers/openai-provider.ts");
+  assert.match(provider, /function mockCatalogItemName/);
+  assert.match(provider, /Beschikbare catalogusproducten \(zonder prijzen\)/);
+  assert.match(provider, /items: \[\{ description: catalogItemName, catalogItemName, quantity: 1, unit: "stuk" \}\]/);
+});
+
+test("WP7.2B.2 stores a required immutable service date only for new invoices", async () => {
+  const migration = await file("supabase/migrations/20260805181840_032_invoice_service_date_and_vat_specification.sql");
+  const invoiceRoute = await file("src/app/api/v1/companies/[companyId]/quotes/[quoteId]/invoice/route.ts");
+  const createButton = await file("src/features/quotes/components/create-invoice-button.tsx");
+  const immutability = await file("supabase/migrations/024_invoice_integrity_and_numbering.sql");
+
+  assert.match(migration, /alter table public\.invoices add column if not exists service_date date/);
+  assert.doesNotMatch(migration, /update public\.invoices[\s\S]*service_date/i);
+  assert.match(migration, /target_service_date date default null/);
+  assert.match(migration, /message = 'INVOICE_SERVICE_DATE_REQUIRED'/);
+  assert.match(migration, /invoice_date, service_date, created_by/);
+  assert.match(migration, /current_date, target_service_date, auth\.uid\(\)/);
+  assert.match(migration, /drop function public\.create_invoice_from_quote\(uuid, uuid\)/);
+  assert.match(migration, /has_company_role\(target_company_id, array\['owner', 'employee'\]/);
+  assert.match(migration, /where id = target_quote_id and company_id = target_company_id[\s\S]*for update/);
+  assert.match(migration, /select new_invoice_id, position, description, quantity, unit, unit_price_cents, vat_rate, line_total_cents/);
+  assert.match(immutability, /to_jsonb\(new\) - array\['status', 'sent_at', 'paid_at', 'voided_at', 'void_reason', 'updated_at'\]/);
+  assert.doesNotMatch(immutability, /'service_date'/);
+
+  assert.match(invoiceRoute, /serviceDate: z\.string\(\)\.regex/);
+  assert.match(invoiceRoute, /target_service_date: input\.data\.serviceDate/);
+  assert.match(invoiceRoute, /INVOICE_SERVICE_DATE_REQUIRED/);
+  assert.match(createButton, /type="date"/);
+  assert.match(createButton, /JSON\.stringify\(\{ serviceDate \}\)/);
+});
+
+test("WP7.2B.2 calculates VAT groups from immutable invoice item snapshots", async () => {
+  assert.deepEqual(calculateVatSpecification([{ vatRate: 21, lineTotalCents: 10_000 }], 2_100), [
+    { vatRate: 21, taxableBaseCents: 10_000, taxCents: 2_100 },
+  ]);
+  assert.deepEqual(calculateVatSpecification([{ vatRate: 9, lineTotalCents: 5_000 }], 450), [
+    { vatRate: 9, taxableBaseCents: 5_000, taxCents: 450 },
+  ]);
+  assert.deepEqual(calculateVatSpecification([
+    { vatRate: 21, lineTotalCents: 10_000 },
+    { vatRate: 9, lineTotalCents: 5_000 },
+  ], 2_550), [
+    { vatRate: 21, taxableBaseCents: 10_000, taxCents: 2_100 },
+    { vatRate: 9, taxableBaseCents: 5_000, taxCents: 450 },
+  ]);
+  assert.deepEqual(calculateVatSpecification([
+    { vatRate: 21, lineTotalCents: 1 },
+    { vatRate: 21, lineTotalCents: 1 },
+    { vatRate: 21, lineTotalCents: 1 },
+  ], 0), [{ vatRate: 21, taxableBaseCents: 3, taxCents: 0 }]);
+
+  const pdfRoute = await file("src/app/api/v1/companies/[companyId]/invoices/[invoiceId]/pdf/route.ts");
+  const pdf = await file("src/features/invoices/infrastructure/invoice-pdf.tsx");
+  assert.match(pdfRoute, /service_date/);
+  assert.match(pdfRoute, /serviceDate: invoice\.service_date/);
+  assert.match(pdf, /calculateVatSpecification\(invoice\.items, invoice\.taxCents\)/);
+  assert.match(pdf, /Leverdatum/);
+  assert.match(pdf, /BTW-specificatie/);
+  assert.match(pdf, /BTW totaal/);
+  assert.doesNotMatch(pdfRoute, /product_catalog_items|from\("companies"\)|from\("customers"\)/);
 });

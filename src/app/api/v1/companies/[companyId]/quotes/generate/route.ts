@@ -6,11 +6,20 @@ import { createQuoteSystemPrompt, generateQuoteSchema } from "@/ai/prompts/gener
 import { getOrganizationContext } from "@/i18n/organization-context";
 import { createClient } from "@/lib/supabase/server";
 
-const inputSchema = z.object({
+const freeInputSchema = z.object({
   customerName: z.string().trim().min(2).max(160),
   customerEmail: z.string().trim().email().optional().or(z.literal("")),
   requestText: z.string().trim().min(20).max(30000),
 });
+
+const conversationInputSchema = z.object({ conversationId: z.string().uuid() });
+
+type GenerationSource = {
+  customerName: string;
+  customerEmail: string | null;
+  requestText: string;
+  customerId?: string;
+};
 
 const normalizeCatalogName = (value: string, locale: Intl.LocalesArgument) => value.trim().toLocaleLowerCase(locale);
 
@@ -25,9 +34,38 @@ function quoteGenerationFailure(error: unknown) {
   return { status: 502, code: "AI_GENERATION_FAILED", message: "Het offerteconcept kon niet worden gemaakt. Probeer het opnieuw." };
 }
 
+function buildConversationRequestText(subject: string | null, messages: Array<{ direction: string; body: string | null }>) {
+  const relevantMessages = messages
+    .map((message) => ({
+      label: message.direction === "inbound" ? "Klant" : "Bedrijf",
+      body: message.body?.trim() ?? "",
+    }))
+    .filter((message) => message.body.length > 0);
+
+  if (relevantMessages.length === 0) return null;
+
+  return [
+    `Onderwerp: ${(subject?.trim() || "Zonder onderwerp").slice(0, 500)}`,
+    "",
+    "Gespreksberichten:",
+    ...relevantMessages.map((message) => `${message.label}: ${message.body}`),
+  ].join("\n").slice(0, 30000);
+}
+
 export async function POST(request: Request, { params }: { params: Promise<{ companyId: string }> }) {
-  const input = inputSchema.safeParse(await request.json());
-  if (!input.success) return NextResponse.json({ error: { code: "INVALID_INPUT", message: "Vul klant en aanvraag volledig in." } }, { status: 400 });
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: { code: "INVALID_INPUT", message: "Vul klant en aanvraag volledig in." } }, { status: 400 });
+  }
+
+  const isConversationMode = typeof body === "object" && body !== null && "conversationId" in body;
+  const conversationInput = isConversationMode ? conversationInputSchema.safeParse(body) : null;
+  const freeInput = isConversationMode ? null : freeInputSchema.safeParse(body);
+  if ((conversationInput && !conversationInput.success) || (freeInput && !freeInput.success)) {
+    return NextResponse.json({ error: { code: "INVALID_INPUT", message: "Vul klant en aanvraag volledig in." } }, { status: 400 });
+  }
 
   const { companyId } = await params;
   const organization = getOrganizationContext(companyId);
@@ -45,12 +83,80 @@ export async function POST(request: Request, { params }: { params: Promise<{ com
     return NextResponse.json({ error: { code: "FORBIDDEN", message: "Geen toegang tot deze organisatie." } }, { status: 403 });
   }
 
-  const { data: catalog } = await supabase
+  let source: GenerationSource;
+  if (conversationInput?.success) {
+    const { data: conversation, error: conversationError } = await supabase
+      .from("conversations")
+      .select("id,company_id,customer_id,subject")
+      .eq("id", conversationInput.data.conversationId)
+      .eq("company_id", companyId)
+      .maybeSingle();
+    if (conversationError) {
+      return NextResponse.json({ error: { code: "CONVERSATION_LOOKUP_FAILED", message: "Aanvraag kon niet worden opgehaald." } }, { status: 500 });
+    }
+    if (!conversation) {
+      return NextResponse.json({ error: { code: "CONVERSATION_NOT_FOUND", message: "Aanvraag niet gevonden." } }, { status: 404 });
+    }
+    if (!conversation.customer_id) {
+      return NextResponse.json({ error: { code: "CONVERSATION_CUSTOMER_REQUIRED", message: "Deze aanvraag heeft geen geldige klant." } }, { status: 422 });
+    }
+
+    const { data: customer, error: customerError } = await supabase
+      .from("customers")
+      .select("id,name,email,company_id")
+      .eq("id", conversation.customer_id)
+      .eq("company_id", companyId)
+      .maybeSingle();
+    if (customerError) {
+      return NextResponse.json({ error: { code: "CONVERSATION_LOOKUP_FAILED", message: "Aanvraag kon niet worden opgehaald." } }, { status: 500 });
+    }
+    if (!customer) {
+      return NextResponse.json({ error: { code: "CONVERSATION_NOT_FOUND", message: "Aanvraag niet gevonden." } }, { status: 404 });
+    }
+
+    const { data: messages, error: messagesError } = await supabase
+      .from("conversation_messages")
+      .select("direction,body,created_at")
+      .eq("conversation_id", conversation.id)
+      .eq("company_id", conversation.company_id)
+      .in("direction", ["inbound", "outbound"])
+      .order("created_at", { ascending: true })
+      .limit(50);
+    if (messagesError) {
+      return NextResponse.json({ error: { code: "CONVERSATION_LOOKUP_FAILED", message: "Aanvraag kon niet worden opgehaald." } }, { status: 500 });
+    }
+
+    const requestText = buildConversationRequestText(conversation.subject, messages ?? []);
+    if (!requestText || requestText.length < 20) {
+      return NextResponse.json({ error: { code: "CONVERSATION_REQUEST_REQUIRED", message: "Deze aanvraag bevat onvoldoende informatie voor een offerteconcept." } }, { status: 422 });
+    }
+
+    source = {
+      customerId: customer.id,
+      customerName: customer.name,
+      customerEmail: customer.email,
+      requestText,
+    };
+  } else if (freeInput?.success) {
+    source = {
+      customerName: freeInput.data.customerName,
+      customerEmail: freeInput.data.customerEmail || null,
+      requestText: freeInput.data.requestText,
+    };
+  } else {
+    return NextResponse.json({ error: { code: "INVALID_INPUT", message: "Vul klant en aanvraag volledig in." } }, { status: 400 });
+  }
+
+  const { data: catalog, error: catalogError } = await supabase
     .from("product_catalog_items")
     .select("id,name,sku,unit")
     .eq("company_id", companyId)
     .eq("is_active", true)
     .limit(100);
+  if (catalogError) {
+    return NextResponse.json({ error: { code: "CATALOG_LOOKUP_FAILED", message: "De productcatalogus kon niet worden opgehaald." } }, { status: 500 });
+  }
+
   const activeCatalog = catalog ?? [];
   const catalogByName = new Map(activeCatalog.map((item) => [normalizeCatalogName(item.name, organization.locale), item]));
   const catalogText = activeCatalog
@@ -65,31 +171,46 @@ export async function POST(request: Request, { params }: { params: Promise<{ com
       language: organization.language,
       locale: organization.locale,
       systemPrompt: createQuoteSystemPrompt(organization.language, organization.locale),
-      userPrompt: `Aanvraag:\n${input.data.requestText}\n\nBeschikbare catalogusproducten (zonder prijzen):\n${catalogText || "Geen catalogusproducten beschikbaar."}`,
+      userPrompt: `Aanvraag:\n${source.requestText}\n\nBeschikbare catalogusproducten (zonder prijzen):\n${catalogText || "Geen catalogusproducten beschikbaar."}`,
       schema: generateQuoteSchema,
-      metadata: { catalogItemCount: activeCatalog.length, requestLength: input.data.requestText.length },
+      metadata: { catalogItemCount: activeCatalog.length, requestLength: source.requestText.length, source: source.customerId ? "conversation" : "free_input" },
       preferredModel: process.env.AI_MODEL_QUOTE,
     }, async ({ data }) => {
-      const notes = `${data.summary}\n\nAannames:\n${data.assumptions.map((item) => `- ${item}`).join("\n")}\n\nKlantvragen:\n${data.customerQuestions.map((item) => `- ${item}`).join("\n")}`;
-      const draftItems = data.items.map((item) => {
+      const draftItems = data.items.flatMap((item) => {
         const matchedCatalogItem = catalogByName.get(normalizeCatalogName(item.catalogItemName ?? item.description, organization.locale));
-        return {
-          description: item.description,
-          quantity: item.quantity,
-          unit: item.unit,
-          catalogItemId: matchedCatalogItem?.id ?? null,
-        };
+        if (!matchedCatalogItem) return [];
+        return [{ description: matchedCatalogItem.name, quantity: item.quantity, catalogItemId: matchedCatalogItem.id }];
       });
-      const { data: quoteId, error } = await supabase.rpc("create_ai_quote_draft", {
-        target_company_id: companyId,
-        customer_name: input.data.customerName,
-        customer_email: input.data.customerEmail || null,
-        draft_title: data.title,
-        draft_notes: notes,
-        draft_items: draftItems,
-      });
-      if (error || !quoteId) throw new AiStorageError("Offerteconcept kon niet atomair worden opgeslagen.");
-      return { quoteId: quoteId as string };
+      const unmatchedItems = data.items
+        .filter((item) => !catalogByName.has(normalizeCatalogName(item.catalogItemName ?? item.description, organization.locale)))
+        .map((item) => item.description);
+      if (draftItems.length === 0) throw new AiValidationError("Geen AI-regel kon exact aan een actief catalogusproduct worden gekoppeld.");
+
+      const notes = [
+        data.summary,
+        `Aannames:\n${data.assumptions.map((item) => `- ${item}`).join("\n") || "- Geen"}`,
+        `Klantvragen:\n${data.customerQuestions.map((item) => `- ${item}`).join("\n") || "- Geen"}`,
+        ...(unmatchedItems.length > 0 ? [`Niet opgenomen (geen exact actief catalogusproduct):\n${unmatchedItems.map((item) => `- ${item}`).join("\n")}`] : []),
+      ].join("\n\n");
+
+      const quoteDraft = source.customerId
+        ? await supabase.rpc("create_ai_quote_draft", {
+          target_company_id: companyId,
+          target_customer_id: source.customerId,
+          draft_title: data.title,
+          draft_notes: notes,
+          draft_items: draftItems,
+        })
+        : await supabase.rpc("create_ai_quote_draft", {
+          target_company_id: companyId,
+          customer_name: source.customerName,
+          customer_email: source.customerEmail,
+          draft_title: data.title,
+          draft_notes: notes,
+          draft_items: draftItems,
+        });
+      if (quoteDraft.error || !quoteDraft.data) throw new AiStorageError("Offerteconcept kon niet atomair worden opgeslagen.");
+      return { quoteId: quoteDraft.data as string };
     });
 
     return NextResponse.json({ quoteId: result.quoteId, aiRunId: result.runId }, { status: 201 });
