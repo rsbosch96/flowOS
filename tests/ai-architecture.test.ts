@@ -794,3 +794,33 @@ test("WP7.2B.2 calculates VAT groups from immutable invoice item snapshots", asy
   assert.match(pdf, /BTW totaal/);
   assert.doesNotMatch(pdfRoute, /product_catalog_items|from\("companies"\)|from\("customers"\)/);
 });
+
+test("WP13.4 keeps optional document customers tenant-bound in the route and database", async () => {
+  const route = await file("src/app/api/v1/companies/[companyId]/documents/upload-url/route.ts");
+  const migration = await file("supabase/migrations/20260808154044_033_document_tenant_integrity.sql");
+
+  // A member of the route company is required before any customer lookup or write.
+  assert.match(route, /.from\("company_memberships"\)[\s\S]*?\.eq\("company_id", companyId\)[\s\S]*?\.eq\("user_id", user\.id\)/);
+  assert.match(route, /if \(!membership\) return NextResponse\.json\([\s\S]*?status: 403/);
+
+  // A client customer id is only accepted after an id + company lookup; NULL stays valid.
+  assert.match(route, /if \(input\.data\.customerId\)[\s\S]*?\.from\("customers"\)[\s\S]*?\.eq\("id", input\.data\.customerId\)[\s\S]*?\.eq\("company_id", companyId\)/);
+  assert.match(route, /let validatedCustomerId: string \| null = null/);
+  assert.match(route, /customer_id: validatedCustomerId/);
+  assert.doesNotMatch(route, /customer_id: input\.data\.customerId \?\? null/);
+  assert.match(route, /Klant niet gevonden voor deze organisatie/);
+
+  // The route alone cannot choose a tenant path or bypass Storage through service role.
+  assert.match(route, /const path = `\$\{companyId\}\/\$\{documentId\}\/\$\{safeName\}`/);
+  assert.match(route, /storage\.from\("company-documents"\)\.createSignedUploadUrl\(path\)/);
+  assert.doesNotMatch(route, /createAdminClient|SUPABASE_SERVICE_ROLE_KEY|SUPABASE_SECRET_KEY/);
+
+  // The database rejects both cross-tenant and orphan links, while nullable customer_id remains legal.
+  assert.match(migration, /DOCUMENT_CUSTOMER_INTEGRITY_ORPHANS_FOUND/);
+  assert.match(migration, /DOCUMENT_CUSTOMER_TENANT_MISMATCHES_FOUND/);
+  assert.match(migration, /customers_id_company_id_key unique \(id, company_id\)/);
+  assert.match(migration, /foreign key \(customer_id, company_id\)[\s\S]*?references public\.customers \(id, company_id\)/);
+  assert.match(migration, /on update no action[\s\S]*?on delete set null \(customer_id\)/);
+  assert.match(migration, /drop constraint if exists documents_customer_id_fkey/);
+  assert.doesNotMatch(migration, /drop cascade/i);
+});
