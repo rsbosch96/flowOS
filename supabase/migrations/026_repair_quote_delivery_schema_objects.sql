@@ -7,20 +7,11 @@ alter table public.quotes
   add column if not exists public_token_revoked_at timestamptz;
 
 do $$
-declare
-  token_hash_attnum smallint;
 begin
-  select attnum into token_hash_attnum
-  from pg_attribute
-  where attrelid = 'public.quotes'::regclass
-    and attname = 'public_token_hash'
-    and not attisdropped;
-
   if not exists (
-    select 1 from pg_index
-    where indrelid = 'public.quotes'::regclass
-      and indisunique
-      and indkey::smallint[] = array[token_hash_attnum]::smallint[]
+    select 1 from pg_constraint
+    where conrelid = 'public.quotes'::regclass
+      and conname = 'quotes_public_token_hash_key'
   ) then
     alter table public.quotes
       add constraint quotes_public_token_hash_key unique (public_token_hash);
@@ -65,20 +56,11 @@ alter table public.quote_email_deliveries
   add column if not exists sent_at timestamptz;
 
 do $$
-declare
-  delivery_idempotency_attnums smallint[];
 begin
-  select array_agg(attnum order by attnum) into delivery_idempotency_attnums
-  from pg_attribute
-  where attrelid = 'public.quote_email_deliveries'::regclass
-    and attname in ('quote_id', 'delivery_type', 'idempotency_key')
-    and not attisdropped;
-
   if not exists (
-    select 1 from pg_index
-    where indrelid = 'public.quote_email_deliveries'::regclass
-      and indisunique
-      and indkey::smallint[] = delivery_idempotency_attnums
+    select 1 from pg_constraint
+    where conrelid = 'public.quote_email_deliveries'::regclass
+      and conname = 'quote_email_deliveries_quote_delivery_idempotency_key'
   ) then
     alter table public.quote_email_deliveries
       add constraint quote_email_deliveries_quote_delivery_idempotency_key

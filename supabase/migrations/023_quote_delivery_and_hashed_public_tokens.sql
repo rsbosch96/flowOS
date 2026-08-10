@@ -28,7 +28,8 @@ create table if not exists public.quote_email_deliveries (
   error_code text,
   created_at timestamptz not null default now(),
   sent_at timestamptz,
-  unique (quote_id, delivery_type, idempotency_key)
+  constraint quote_email_deliveries_quote_delivery_idempotency_key
+    unique (quote_id, delivery_type, idempotency_key)
 );
 
 create index if not exists quote_email_deliveries_company_created_idx
@@ -46,7 +47,7 @@ immutable
 strict
 set search_path = public
 as $$
-  select encode(digest(raw_token, 'sha256'), 'hex')
+  select encode(extensions.digest(raw_token::text, 'sha256'::text), 'hex')
 $$;
 
 create or replace function public.publish_quote_for_customer(
@@ -76,7 +77,7 @@ begin
   if not found then raise exception 'Quote not found for this company'; end if;
   if target_quote.status <> 'approved' then raise exception 'Quote must be approved before publishing'; end if;
 
-  generated_token := encode(gen_random_bytes(32), 'hex');
+  generated_token := encode(extensions.gen_random_bytes(32::integer), 'hex');
   update public.quotes
   set status = 'sent',
       public_token = null,
@@ -117,7 +118,7 @@ begin
 
   if not found or target_quote.status <> 'sent' then raise exception 'Only sent quotes can rotate a public token'; end if;
 
-  generated_token := encode(gen_random_bytes(32), 'hex');
+  generated_token := encode(extensions.gen_random_bytes(32::integer), 'hex');
   update public.quotes
   set public_token = null,
       public_token_hash = public.hash_public_quote_token(generated_token),

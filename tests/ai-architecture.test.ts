@@ -436,8 +436,8 @@ test("WP6.1A resets raw customer links and uses only token hashes", async () => 
 
   assert.match(migration, /add column if not exists public_token_hash text unique/);
   assert.match(migration, /public_token = null,[\s\S]*public_token_hash = null,[\s\S]*public_token_expires_at = null,[\s\S]*public_token_revoked_at = now\(\)/);
-  assert.match(migration, /encode\(gen_random_bytes\(32\), 'hex'\)/);
-  assert.match(migration, /encode\(digest\(raw_token, 'sha256'\), 'hex'\)/);
+  assert.match(migration, /encode\(extensions\.gen_random_bytes\(32::integer\), 'hex'\)/);
+  assert.match(migration, /encode\(extensions\.digest\(raw_token::text, 'sha256'::text\), 'hex'\)/);
   assert.match(migration, /public_token_hash = public\.hash_public_quote_token\(raw_token\)/);
   assert.match(migration, /public_token_revoked_at is null/);
   assert.match(migration, /revoke all on function public\.get_public_quote\(uuid\)/);
@@ -446,6 +446,22 @@ test("WP6.1A resets raw customer links and uses only token hashes", async () => 
   assert.match(migration, /set public_token = null,[\s\S]*public_token_hash = null,[\s\S]*public_token_revoked_at = now\(\)/);
   assert.match(route, /raw_token: token/);
   assert.match(page, /raw_token: token/);
+});
+
+test("PRR2D makes AI runs server-write-only and Data API grants explicit", async () => {
+  const migration = await file("supabase/migrations/20260810155935_schema_convergence_hardening.sql");
+  const tokenMigration = await file("supabase/migrations/023_quote_delivery_and_hashed_public_tokens.sql");
+  const repairMigration = await file("supabase/migrations/026_repair_quote_delivery_schema_objects.sql");
+
+  assert.match(migration, /drop policy if exists "tenant ai runs insert" on public\.ai_runs/);
+  assert.match(migration, /drop policy if exists "tenant ai runs update" on public\.ai_runs/);
+  assert.match(migration, /revoke all privileges on table[\s\S]*public\.rate_limit_windows[\s\S]*from anon, authenticated, service_role/);
+  assert.match(migration, /grant select, update on table public\.ai_runs to service_role/);
+  assert.match(migration, /grant insert on table public\.audit_logs to service_role/);
+  assert.match(migration, /revoke all on function public\.hash_public_quote_token\(text\)/);
+  assert.match(tokenMigration, /constraint quote_email_deliveries_quote_delivery_idempotency_key[\s\S]*unique \(quote_id, delivery_type, idempotency_key\)/);
+  assert.match(repairMigration, /conrelid = 'public\.quote_email_deliveries'::regclass[\s\S]*conname = 'quote_email_deliveries_quote_delivery_idempotency_key'/);
+  assert.doesNotMatch(repairMigration, /pg_index[\s\S]*delivery_idempotency_attnums/);
 });
 
 test("WP6.1A repair qualifies pgcrypto calls without changing token RPC contracts", async () => {
