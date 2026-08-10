@@ -1,18 +1,30 @@
 import "server-only";
 import type { AiProvider, AiRequest } from "@/ai/types";
 import { AiConfigurationError, AiProviderError, AiRateLimitError, AiTimeoutError, AiValidationError } from "@/ai/errors";
+import { assertRc1InputLimit, getRc1SpikeConfig } from "@/ai/rc1-spike";
+
+function mockCatalogItemName(userPrompt: string) {
+  const catalog = userPrompt.split("Beschikbare catalogusproducten (zonder prijzen):\n")[1]?.split("\n\n")[0];
+  const firstItem = catalog?.split("\n").map((line) => line.trim()).find(Boolean);
+  if (!firstItem || firstItem === "Geen catalogusproducten beschikbaar.") return "Werkvoorbereiding";
+
+  const unitSeparator = firstItem.lastIndexOf(":");
+  const nameWithSku = unitSeparator > 0 ? firstItem.slice(0, unitSeparator) : firstItem;
+  return nameWithSku.replace(/\s+\([^()]*\)$/, "").trim() || "Werkvoorbereiding";
+}
 
 export class OpenAiProvider implements AiProvider {
   readonly name = "openai" as const;
 
   async generate<T>(request: AiRequest<T>) {
     if (process.env.AI_MODE === "mock") {
+      const catalogItemName = mockCatalogItemName(request.userPrompt);
       const parsed = request.schema.safeParse({
         title: "Offerteconcept - installatiewerkzaamheden",
         summary: "Testconcept voor menselijke controle.",
         assumptions: ["Controleer materiaal en planning voor verzending."],
         customerQuestions: [],
-        items: [{ description: "Werkvoorbereiding", quantity: 1, unit: "stuk" }],
+        items: [{ description: catalogItemName, catalogItemName, quantity: 1, unit: "stuk" }],
       });
       if (!parsed.success) throw new AiValidationError("Mock-output voldoet niet aan schema.");
       return { data: parsed.data, provider: this.name, model: "mock", usage: {} };
@@ -22,6 +34,8 @@ export class OpenAiProvider implements AiProvider {
     if (!key) throw new AiConfigurationError("OpenAI is niet geconfigureerd.");
 
     const model = request.preferredModel ?? process.env.AI_MODEL_QUOTE ?? process.env.OPENAI_QUOTE_MODEL ?? "gpt-5.2";
+    const rc1Config = getRc1SpikeConfig(model);
+    if (rc1Config) assertRc1InputLimit(request.systemPrompt, request.userPrompt, rc1Config);
     let response: Response;
     try {
       response = await fetch("https://api.openai.com/v1/responses", {
@@ -31,6 +45,7 @@ export class OpenAiProvider implements AiProvider {
           model,
           input: [{ role: "system", content: request.systemPrompt }, { role: "user", content: request.userPrompt }],
           text: { format: { type: "json_object" } },
+          ...(rc1Config ? { max_output_tokens: rc1Config.maxOutputTokens } : {}),
         }),
         signal: AbortSignal.timeout(45_000),
       });

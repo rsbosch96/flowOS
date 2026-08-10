@@ -2,6 +2,7 @@ export const AiErrorCode = {
   Timeout: "TIMEOUT",
   RateLimit: "RATE_LIMIT",
   BudgetExceeded: "BUDGET_EXCEEDED",
+  BudgetStatusUnknown: "BUDGET_STATUS_UNKNOWN",
   ProviderError: "PROVIDER_ERROR",
   ValidationError: "VALIDATION_ERROR",
   Unknown: "UNKNOWN",
@@ -23,6 +24,8 @@ export class AiProviderError extends AiError { readonly code = AiErrorCode.Provi
 export class AiValidationError extends AiError { readonly code = AiErrorCode.ValidationError; }
 export class AiRateLimitError extends AiError { readonly code = AiErrorCode.RateLimit; }
 export class AiTimeoutError extends AiError { readonly code = AiErrorCode.Timeout; }
+export class AiBudgetStatusUnknownError extends AiError { readonly code = AiErrorCode.BudgetStatusUnknown; }
+export class AiSpikeLimitError extends AiError { readonly code = AiErrorCode.BudgetExceeded; }
 export class AiStorageError extends AiError { readonly code = AiErrorCode.Unknown; }
 export class AiRunError extends AiError { readonly code = AiErrorCode.Unknown; }
 

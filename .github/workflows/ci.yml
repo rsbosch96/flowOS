@@ -1,0 +1,59 @@
+name: FlowOS CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Typecheck, lint, test and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-placeholder-anon-key
+          SUPABASE_SERVICE_ROLE_KEY: ci-placeholder-service-role-key
+          OPENAI_API_KEY: ci-placeholder-openai-key
+          OPENAI_QUOTE_MODEL: gpt-5.2
+          AI_PROVIDER: openai
+          AI_MODEL_QUOTE: gpt-5.2
+          AI_MODE: test
+          AI_MODEL_PRICING_JSON: "{}"
+          STRIPE_SECRET_KEY: sk_test_placeholder
+          STRIPE_WEBHOOK_SECRET: whsec_placeholder
+          STRIPE_PRICE_STARTER: price_placeholder
+          N8N_WEBHOOK_SECRET: ci-placeholder-secret
+          RESEND_API_KEY: re_placeholder
+          EMAIL_FROM: FlowOS <test@example.com>
