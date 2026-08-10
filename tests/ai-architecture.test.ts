@@ -15,7 +15,7 @@ import { createQuoteEmail } from "../src/features/quotes/infrastructure/quote-em
 import { calculateVatSpecification } from "../src/features/invoices/infrastructure/vat-specification.ts";
 import { readRuntimeConfig, RuntimeConfigError } from "../src/lib/config/runtime.ts";
 import { sanitizeLogContext } from "../src/lib/observability/sanitize.ts";
-import { availableInvoiceStatusActions, invoiceStatusLabel, quoteStatusLabel } from "../src/lib/status-labels.ts";
+import { availableInvoiceStatusActions, conversationStatusLabel, invoiceStatusLabel, quoteStatusLabel, taskStatusLabel } from "../src/lib/status-labels.ts";
 
 const file = (path: string) => readFile(resolve(process.cwd(), path), "utf8");
 const defaultRequest = {
@@ -1060,4 +1060,57 @@ test("Pilot Core 1 exposes only allowed invoice actions and Dutch status labels"
   assert.match(statusRoute, /transition_invoice_status/);
   assert.match(statusRoute, /status: 409/);
   assert.match(quotePage, /quoteStatusLabel\(quote\.status\)/);
+});
+
+test("Pilot Core 2 derives the start checklist from tenant data without blocking existing users", async () => {
+  const query = await file("src/features/dashboard/queries/get-dashboard.ts");
+  const checklist = await file("src/features/dashboard/components/start-checklist.tsx");
+  const dashboard = await file("src/features/dashboard/components/dashboard.tsx");
+
+  assert.match(query, /kvk_number,vat_number,iban,address/);
+  assert.match(query, /from\("product_catalog_items"\)[\s\S]*?\.eq\("company_id", company\.id\)[\s\S]*?\.eq\("is_active", true\)/);
+  assert.match(query, /companyProfileComplete/);
+  assert.match(query, /hasCatalogProduct/);
+  assert.match(query, /hasRequest/);
+  assert.match(checklist, /\/settings\/company-profile/);
+  assert.match(checklist, /\/catalog/);
+  assert.match(checklist, /\/conversations/);
+  assert.match(checklist, /if \(steps\.every\(\(step\) => step\.completed\)\) return null/);
+  assert.doesNotMatch(checklist, /\.insert\(|\.update\(|\.rpc\(/);
+  assert.match(dashboard, /<StartChecklist companySlug=\{data\.company\.slug\} setup=\{data\.setup\}/);
+});
+
+test("Pilot Core 2 uses central Dutch labels with a safe unknown-status fallback", async () => {
+  const conversations = await file("src/app/(app)/app/[companySlug]/conversations/page.tsx");
+  const conversationDetail = await file("src/app/(app)/app/[companySlug]/conversations/[conversationId]/page.tsx");
+  const tasks = await file("src/features/tasks/components/task-manager.tsx");
+
+  assert.equal(quoteStatusLabel("draft"), "Concept");
+  assert.equal(quoteStatusLabel("approved"), "Goedgekeurd");
+  assert.equal(quoteStatusLabel("sent"), "Verzonden");
+  assert.equal(quoteStatusLabel("accepted"), "Geaccepteerd");
+  assert.equal(quoteStatusLabel("rejected"), "Afgewezen");
+  assert.equal(invoiceStatusLabel("draft"), "Concept");
+  assert.equal(invoiceStatusLabel("sent"), "Verzonden");
+  assert.equal(invoiceStatusLabel("overdue"), "Verlopen");
+  assert.equal(invoiceStatusLabel("paid"), "Betaald");
+  assert.equal(invoiceStatusLabel("void"), "Geannuleerd");
+  assert.equal(conversationStatusLabel("pending"), "In behandeling");
+  assert.equal(taskStatusLabel("in_progress"), "Bezig");
+  assert.equal(invoiceStatusLabel("future_status"), "Onbekende status");
+  assert.match(conversations, /conversationStatusLabel\(conversation\.status\)/);
+  assert.match(conversationDetail, /conversationStatusLabel\(conversation\.status\)/);
+  assert.match(tasks, /taskStatusLabel\(task\.status\)/);
+});
+
+test("Pilot Core 2 distinguishes a temporary public quote rate limit from an unavailable link", async () => {
+  const page = await file("src/app/offerte/[token]/page.tsx");
+
+  assert.match(page, /const \{ data, error \} = await supabase\.rpc\("get_public_quote", \{ raw_token: token \}\)/);
+  assert.match(page, /if \(error\?\.code === "RATE_LIMITED"\) return <PublicQuoteRateLimited \/>;/);
+  assert.match(page, /Te veel verzoeken\. Probeer het over enkele minuten opnieuw\./);
+  assert.match(page, /if \(!quote\) notFound\(\);/);
+  assert.match(page, /CustomerQuoteActions token=\{token\} status=\{quote\.status\}/);
+  assert.match(page, /regex\(\/\^\[a-f0-9\]\{64\}\$\/i\)\.safeParse\(token\)\.success\) notFound\(\);/);
+  assert.doesNotMatch(page, /error\.message|error\.details|tokenhash|limiterkey/i);
 });

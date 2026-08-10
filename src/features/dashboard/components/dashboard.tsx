@@ -3,6 +3,7 @@ import { Bot, ClipboardList, FileText, MessageSquare, Plus } from "lucide-react"
 import { Card } from "@/components/ui/card";
 import { getTranslations } from "@/i18n/get-translations";
 import type { DashboardData } from "@/features/dashboard/queries/get-dashboard";
+import { StartChecklist } from "@/features/dashboard/components/start-checklist";
 
 export function Dashboard({ data }: { data: DashboardData }) {
   const { t } = getTranslations();
@@ -36,6 +37,7 @@ export function Dashboard({ data }: { data: DashboardData }) {
           </Card>
         ))}
       </div>
+      <StartChecklist companySlug={data.company.slug} setup={data.setup} />
       <Card>
         <h2 className="font-semibold">{t("dashboard.nextStep")}</h2>
         <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">{t("dashboard.nextStepDescription")}</p>

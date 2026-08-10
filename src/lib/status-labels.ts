@@ -14,12 +14,38 @@ const invoiceStatusLabels: Record<string, string> = {
   void: "Geannuleerd",
 };
 
+const conversationStatusLabels: Record<string, string> = {
+  open: "Open",
+  pending: "In behandeling",
+  resolved: "Afgerond",
+  archived: "Gearchiveerd",
+};
+
+const taskStatusLabels: Record<string, string> = {
+  todo: "Te doen",
+  in_progress: "Bezig",
+  blocked: "Geblokkeerd",
+  done: "Afgerond",
+};
+
+function statusLabel(labels: Record<string, string>, status: string) {
+  return labels[status] ?? "Onbekende status";
+}
+
 export function quoteStatusLabel(status: string) {
-  return quoteStatusLabels[status] ?? status;
+  return statusLabel(quoteStatusLabels, status);
 }
 
 export function invoiceStatusLabel(status: string) {
-  return invoiceStatusLabels[status] ?? status;
+  return statusLabel(invoiceStatusLabels, status);
+}
+
+export function conversationStatusLabel(status: string) {
+  return statusLabel(conversationStatusLabels, status);
+}
+
+export function taskStatusLabel(status: string) {
+  return statusLabel(taskStatusLabels, status);
 }
 
 export type InvoiceStatusAction = "sent" | "paid" | "void";

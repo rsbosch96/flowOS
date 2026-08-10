@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { Card } from "@/components/ui/card";
 import { ConversationActions } from "@/features/conversations/components/conversation-actions";
 import { createClient } from "@/lib/supabase/server";
+import { conversationStatusLabel } from "@/lib/status-labels";
 
 export default async function ConversationPage({ params }: { params: Promise<{ companySlug: string; conversationId: string }> }) {
   const { companySlug, conversationId } = await params;
@@ -35,7 +36,7 @@ export default async function ConversationPage({ params }: { params: Promise<{ c
             <p className="text-sm text-slate-600">{customer?.name} {customer?.email ? `· ${customer.email}` : ""}</p>
             <h1 className="mt-1 text-xl font-semibold">{conversation.subject ?? "Zonder onderwerp"}</h1>
           </div>
-          <p className="rounded-full bg-slate-100 px-3 py-1 text-sm">{conversation.status}</p>
+          <p className="rounded-full bg-slate-100 px-3 py-1 text-sm">{conversationStatusLabel(conversation.status)}</p>
         </div>
         <div className="mt-6 space-y-3">
           {messages.map((message, index) => (
