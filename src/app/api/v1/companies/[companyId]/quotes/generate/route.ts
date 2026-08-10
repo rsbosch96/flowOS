@@ -5,6 +5,7 @@ import { AiConfigurationError, AiProviderError, AiRateLimitError, AiRunError, Ai
 import { createQuoteSystemPrompt, generateQuoteSchema } from "@/ai/prompts/generate-quote";
 import { getOrganizationContext } from "@/i18n/organization-context";
 import { logServerEvent, withApiRequest } from "@/lib/observability/server";
+import { enforceRateLimit } from "@/lib/rate-limit/server";
 import { createClient } from "@/lib/supabase/server";
 
 const freeInputSchema = z.object({
@@ -85,6 +86,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ com
   if (!membership || membership.role === "technician") {
     return NextResponse.json({ error: { code: "FORBIDDEN", message: "Geen toegang tot deze organisatie." } }, { status: 403 });
   }
+  const rateLimitError = await enforceRateLimit({ policy: "ai_quote_generate", subjectParts: [user.id, companyId], requestId, route: "/api/v1/companies/:companyId/quotes/generate", companyId, actorId: user.id });
+  if (rateLimitError) return rateLimitError;
 
   let source: GenerationSource;
   if (conversationInput?.success) {

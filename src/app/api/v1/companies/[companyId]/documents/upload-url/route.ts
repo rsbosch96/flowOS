@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { logServerEvent, withApiRequest } from "@/lib/observability/server";
+import { enforceRateLimit } from "@/lib/rate-limit/server";
 import { createClient } from "@/lib/supabase/server";
 
 const schema = z.object({ filename: z.string().min(1).max(255), mimeType: z.string().min(3).max(100), byteSize: z.number().int().positive().max(25 * 1024 * 1024), customerId: z.string().uuid().optional() });
@@ -12,6 +13,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ com
   const { data: membership, error: membershipError } = await supabase.from("company_memberships").select("role").eq("company_id", companyId).eq("user_id", user.id).maybeSingle();
   if (membershipError) return NextResponse.json({ error: { message: "Toegang kon niet worden gecontroleerd." } }, { status: 500 });
   if (!membership) return NextResponse.json({ error: { message: "Geen toegang." } }, { status: 403 });
+  const rateLimitError = await enforceRateLimit({ policy: "document_upload_sign", subjectParts: [user.id, companyId], requestId, route: "/api/v1/companies/:companyId/documents/upload-url", companyId, actorId: user.id });
+  if (rateLimitError) return rateLimitError;
 
   let validatedCustomerId: string | null = null;
   if (input.data.customerId) {

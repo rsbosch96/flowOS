@@ -4,6 +4,7 @@ import { Card } from "@/components/ui/card";
 import { formatMoney } from "@/i18n/formatters";
 import { getTranslations } from "@/i18n/get-translations";
 import { createClient } from "@/lib/supabase/server";
+import { quoteStatusLabel } from "@/lib/status-labels";
 
 export default async function QuotesPage({ params }: { params: Promise<{ companySlug: string }> }) {
   const { companySlug } = await params;
@@ -40,7 +41,7 @@ export default async function QuotesPage({ params }: { params: Promise<{ company
             </div>
             <div className="text-right">
               <p className="font-medium">{formatMoney(quote.total_cents)}</p>
-              <p className="text-sm text-slate-600">{quote.status}</p>
+              <p className="text-sm text-slate-600">{quoteStatusLabel(quote.status)}</p>
             </div>
           </Link>
         ))}

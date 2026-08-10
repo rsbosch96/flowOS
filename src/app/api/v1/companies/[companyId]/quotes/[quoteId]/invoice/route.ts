@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { logServerEvent, withApiRequest } from "@/lib/observability/server";
+import { enforceRateLimit } from "@/lib/rate-limit/server";
 import { createClient } from "@/lib/supabase/server";
 
 const inputSchema = z.object({ serviceDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) });
@@ -29,6 +30,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ com
   const { data: quote } = await supabase.from("quotes").select("id,company_id,status").eq("id", quoteId).eq("company_id", companyId).maybeSingle();
   if (!quote) return NextResponse.json({ error: { message: "Offerte niet gevonden." } }, { status: 404 });
   if (quote.status !== "accepted") return NextResponse.json({ error: { message: "Alleen een geaccepteerde offerte kan worden gefactureerd." } }, { status: 409 });
+  const rateLimitError = await enforceRateLimit({ policy: "invoice_create", subjectParts: [quote.company_id, quote.id], requestId, route: "/api/v1/companies/:companyId/quotes/:quoteId/invoice", companyId: quote.company_id, actorId: user.id });
+  if (rateLimitError) return rateLimitError;
 
   const { data: invoiceId, error } = await supabase.rpc("create_invoice_from_quote", {
     target_quote_id: quote.id,

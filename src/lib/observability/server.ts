@@ -55,6 +55,13 @@ export function safeErrorResponse(input: { requestId: string; status?: number; c
   }, { status: input.status ?? 500 }), input.requestId);
 }
 
+export function rateLimitResponse(input: { requestId: string; retryAfterSeconds: number }) {
+  const response = safeErrorResponse({ requestId: input.requestId, status: 429, code: "RATE_LIMITED", message: "Te veel verzoeken. Probeer het later opnieuw." });
+  response.headers.set("Retry-After", String(Math.max(1, Math.ceil(input.retryAfterSeconds))));
+  response.headers.set("Cache-Control", "no-store");
+  return response;
+}
+
 export async function withApiRequest(
   request: Request,
   context: Pick<ServerLogEvent, "route" | "companyId" | "actorId">,

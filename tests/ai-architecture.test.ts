@@ -15,6 +15,7 @@ import { createQuoteEmail } from "../src/features/quotes/infrastructure/quote-em
 import { calculateVatSpecification } from "../src/features/invoices/infrastructure/vat-specification.ts";
 import { readRuntimeConfig, RuntimeConfigError } from "../src/lib/config/runtime.ts";
 import { sanitizeLogContext } from "../src/lib/observability/sanitize.ts";
+import { availableInvoiceStatusActions, invoiceStatusLabel, quoteStatusLabel } from "../src/lib/status-labels.ts";
 
 const file = (path: string) => readFile(resolve(process.cwd(), path), "utf8");
 const defaultRequest = {
@@ -951,4 +952,112 @@ test("OR1 adds a request-id and safe structured error handling to critical route
   assert.match(boundary, /"use client"/);
   assert.match(boundary, /Opnieuw proberen/);
   assert.doesNotMatch(boundary, /error\.message|error\.stack/);
+});
+
+test("OR2B defines an atomic, private database limiter with least-privilege execution", async () => {
+  const migration = await file("supabase/migrations/20260808180000_034_rate_limiting.sql");
+  const cleanup = await file("docs/operations/rate-limiting.md");
+
+  assert.match(migration, /create table if not exists public\.rate_limit_windows/);
+  assert.match(migration, /unique \(policy_key, subject_hash, window_start\)/);
+  assert.match(migration, /subject_hash text not null check \(subject_hash ~ '\^\[a-f0-9\]\{64\}\$'\)/);
+  assert.match(migration, /alter table public\.rate_limit_windows enable row level security/);
+  assert.match(migration, /revoke all on table public\.rate_limit_windows from public, anon, authenticated/);
+  assert.match(migration, /on conflict \(policy_key, subject_hash, window_start\)[\s\S]*?where windows\.request_count < max_requests/);
+  assert.match(migration, /returns table \([\s\S]*?allowed boolean,[\s\S]*?remaining integer,[\s\S]*?retry_after_seconds integer/);
+  assert.match(migration, /security definer[\s\S]*?set search_path = public, pg_temp/);
+  assert.match(migration, /revoke all on function public\.consume_rate_limit\(text, text\) from public, anon, authenticated, service_role/);
+  assert.match(migration, /grant execute on function public\.consume_rate_limit\(text, text\) to service_role/);
+  assert.doesNotMatch(migration, /raw_token text[\s\S]{0,400}insert into public\.rate_limit_windows/i);
+  assert.match(cleanup, /window_start < now\(\) - interval '32 days'/);
+});
+
+test("OR2B enforces public quote limits inside directly callable RPCs without persisting raw tokens", async () => {
+  const migration = await file("supabase/migrations/20260808180000_034_rate_limiting.sql");
+  const publicRoute = await file("src/app/api/public/quotes/[token]/route.ts");
+
+  for (const policy of ["public_quote_read", "public_quote_decision_accept", "public_quote_decision_reject", "public_quote_question"]) {
+    assert.match(migration, new RegExp(`when '${policy}' then`));
+  }
+  assert.match(migration, /token_subject_hash := public\.hash_public_quote_token\(raw_token\)[\s\S]*?consume_rate_limit\('public_quote_read', token_subject_hash\)/);
+  assert.match(migration, /limiter_policy := case when decision = 'accepted' then 'public_quote_decision_accept' else 'public_quote_decision_reject' end/);
+  assert.match(migration, /consume_rate_limit\('public_quote_question', token_subject_hash\)/);
+  assert.match(migration, /questions_last_hour >= 3 or questions_total >= 20/);
+  assert.match(migration, /raise sqlstate 'PGRST'[\s\S]*?'status', 429[\s\S]*?'Retry-After'/);
+  assert.match(publicRoute, /error\?\.code === "RATE_LIMITED"/);
+  assert.match(publicRoute, /rateLimitResponse\(\{ requestId, retryAfterSeconds/);
+  assert.match(publicRoute, /logServerEvent\([\s\S]*?context: \{ policy \}/);
+  assert.doesNotMatch(publicRoute, /context: \{[^}]*token/);
+});
+
+test("OR2B applies fail-closed P0 limits after authenticated tenant validation", async () => {
+  const expectedPolicies: Array<[string, string]> = [
+    ["src/app/api/v1/onboarding/route.ts", "onboarding"],
+    ["src/app/api/v1/companies/[companyId]/billing/checkout/route.ts", "billing_checkout"],
+    ["src/app/api/v1/companies/[companyId]/quotes/generate/route.ts", "ai_quote_generate"],
+    ["src/app/api/v1/companies/[companyId]/quotes/[quoteId]/publish/route.ts", "quote_publish_or_token"],
+    ["src/app/api/v1/companies/[companyId]/quotes/[quoteId]/email/route.ts", "quote_email"],
+    ["src/app/api/v1/companies/[companyId]/quotes/[quoteId]/remind/route.ts", "quote_reminder"],
+    ["src/app/api/v1/companies/[companyId]/quotes/[quoteId]/token/route.ts", "quote_publish_or_token"],
+    ["src/app/api/v1/companies/[companyId]/quotes/[quoteId]/invoice/route.ts", "invoice_create"],
+    ["src/app/api/v1/companies/[companyId]/invoices/[invoiceId]/status/route.ts", "invoice_status"],
+    ["src/app/api/v1/companies/[companyId]/documents/upload-url/route.ts", "document_upload_sign"],
+    ["src/app/api/v1/companies/[companyId]/catalog/[productId]/image/upload-url/route.ts", "product_image_upload_sign"],
+  ];
+  for (const [path, policy] of expectedPolicies) {
+    const source = await file(path);
+    assert.match(source, /enforceRateLimit\(/, path);
+    assert.match(source, new RegExp(`policy: "${policy}"`), path);
+    assert.match(source, /if \(rateLimitError\) return rateLimitError/, path);
+  }
+
+  const limiter = await file("src/lib/rate-limit/server.ts");
+  const observability = await file("src/lib/observability/server.ts");
+  assert.match(limiter, /createAdminClient\(\)\.rpc\("consume_rate_limit"/);
+  assert.match(limiter, /event: "rate_limit\.blocked"/);
+  assert.match(limiter, /event: "rate_limit\.unavailable"/);
+  assert.match(limiter, /status: 503, code: "RATE_LIMIT_UNAVAILABLE"/);
+  assert.match(observability, /code: "RATE_LIMITED"/);
+  assert.match(observability, /Retry-After/);
+  assert.doesNotMatch(limiter, /console\.|requested_subject_hash.*log/i);
+});
+
+test("Pilot Core 1 keeps customer edits tenant-bound and preserves invoice snapshots", async () => {
+  const customerRoute = await file("src/app/api/v1/companies/[companyId]/customers/[customerId]/route.ts");
+  const customerForm = await file("src/features/customers/components/customer-details-form.tsx");
+  const quotePage = await file("src/app/(app)/app/[companySlug]/quotes/[quoteId]/page.tsx");
+  const invoiceMigration = await file("supabase/migrations/20260805181840_032_invoice_service_date_and_vat_specification.sql");
+
+  assert.match(customerRoute, /from\("company_memberships"\)[\s\S]*?\.eq\("company_id", companyId\)[\s\S]*?\.eq\("user_id", user\.id\)/);
+  assert.match(customerRoute, /!membership \|\| membership\.role === "technician"/);
+  assert.match(customerRoute, /from\("customers"\)[\s\S]*?\.eq\("id", customerId\)[\s\S]*?\.eq\("company_id", companyId\)/);
+  assert.match(customerRoute, /\.update\([\s\S]*?\.eq\("id", customer\.id\)\.eq\("company_id", companyId\)/);
+  assert.match(customerRoute, /street: input\.data\.street[\s\S]*?postal_code: input\.data\.postalCode[\s\S]*?city: input\.data\.city[\s\S]*?country: input\.data\.country/);
+  assert.doesNotMatch(customerRoute, /from\("invoices"\)|from\("invoice_items"\)/);
+  assert.match(customerForm, /Straat en huisnummer/);
+  assert.match(customerForm, /Vul deze gegevens aan voordat je een factuur maakt/);
+  assert.match(quotePage, /CustomerDetailsForm/);
+  assert.match(invoiceMigration, /customer_record\.address ->> 'street'/);
+  assert.match(invoiceMigration, /INVOICE_PARTY_DETAILS_MISSING/);
+});
+
+test("Pilot Core 1 exposes only allowed invoice actions and Dutch status labels", async () => {
+  const invoicePage = await file("src/app/(app)/app/[companySlug]/invoices/[invoiceId]/page.tsx");
+  const statusActions = await file("src/features/invoices/components/invoice-status-actions.tsx");
+  const statusRoute = await file("src/app/api/v1/companies/[companyId]/invoices/[invoiceId]/status/route.ts");
+  const quotePage = await file("src/app/(app)/app/[companySlug]/quotes/[quoteId]/page.tsx");
+
+  assert.deepEqual(availableInvoiceStatusActions("draft"), ["sent", "void"]);
+  assert.deepEqual(availableInvoiceStatusActions("sent"), ["paid", "void"]);
+  assert.deepEqual(availableInvoiceStatusActions("overdue"), ["paid", "void"]);
+  assert.deepEqual(availableInvoiceStatusActions("paid"), []);
+  assert.equal(invoiceStatusLabel("void"), "Geannuleerd");
+  assert.equal(quoteStatusLabel("accepted"), "Geaccepteerd");
+  assert.match(invoicePage, /InvoiceStatusActions/);
+  assert.match(statusActions, /Bevestig annuleren/);
+  assert.match(statusActions, /voidReason\.trim\(\)\.length < 2/);
+  assert.match(statusActions, /\/api\/v1\/companies\/\$\{companyId\}\/invoices\/\$\{invoiceId\}\/status/);
+  assert.match(statusRoute, /transition_invoice_status/);
+  assert.match(statusRoute, /status: 409/);
+  assert.match(quotePage, /quoteStatusLabel\(quote\.status\)/);
 });

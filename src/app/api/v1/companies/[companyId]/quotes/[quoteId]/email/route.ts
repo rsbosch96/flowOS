@@ -4,6 +4,7 @@ import { sendQuoteEmail, type QuoteForDelivery } from "@/features/quotes/infrast
 import { createClient } from "@/lib/supabase/server";
 import { recordServerAuditEvent } from "@/lib/audit/server";
 import { logServerEvent, withApiRequest } from "@/lib/observability/server";
+import { enforceRateLimit } from "@/lib/rate-limit/server";
 
 const idempotencyKeySchema = z.string().uuid();
 
@@ -20,6 +21,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ com
   const { data: quote } = await supabase.from("quotes").select("id,company_id,title,quote_number,status,customers(name,email),companies(name)").eq("id", quoteId).eq("company_id", companyId).maybeSingle();
   if (!quote) return NextResponse.json({ error: { message: "Offerte niet gevonden." } }, { status: 404 });
   if (!['approved', 'sent'].includes(quote.status)) return NextResponse.json({ error: { message: "De offerte moet eerst goedgekeurd zijn." } }, { status: 409 });
+  const rateLimitError = await enforceRateLimit({ policy: "quote_email", subjectParts: [quote.company_id, quote.id], requestId, route: "/api/v1/companies/:companyId/quotes/:quoteId/email", companyId: quote.company_id, actorId: user.id });
+  if (rateLimitError) return rateLimitError;
 
   const result = await sendQuoteEmail({ supabase, companyId, quote: quote as unknown as QuoteForDelivery, deliveryType: "initial", idempotencyKey: idempotencyKey.data, origin: new URL(request.url).origin });
   if (!result.ok) {
