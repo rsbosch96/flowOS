@@ -547,7 +547,7 @@ test("WP6.1A safely escapes HTML email and also renders plain text", () => {
 });
 
 test("WP6.1A logs one public decision and bounds public questions per hashed token", async () => {
-  const migration = await file("supabase/migrations/023_quote_delivery_and_hashed_public_tokens.sql");
+  const migration = (await file("supabase/migrations/023_quote_delivery_and_hashed_public_tokens.sql")).replace(/\r\n/g, "\n");
   const decisionFunction = migration.slice(migration.indexOf("create or replace function public.customer_decide_quote(\n  raw_token text"), migration.indexOf("create or replace function public.customer_question_quote"));
   const auditInsert = decisionFunction.slice(decisionFunction.indexOf("insert into public.audit_logs"));
 
@@ -1129,4 +1129,42 @@ test("Pilot Core 2 distinguishes a temporary public quote rate limit from an una
   assert.match(page, /CustomerQuoteActions token=\{token\} status=\{quote\.status\}/);
   assert.match(page, /regex\(\/\^\[a-f0-9\]\{64\}\$\/i\)\.safeParse\(token\)\.success\) notFound\(\);/);
   assert.doesNotMatch(page, /error\.message|error\.details|tokenhash|limiterkey/i);
+});
+
+test("PL1 keeps Planning additive, tenant-bound and provider-neutral", async () => {
+  const migration = await file("supabase/migrations/20260810185630_planning_events_v1.sql");
+  const route = await file("src/app/api/v1/companies/[companyId]/planning-events/route.ts");
+  const page = await file("src/app/(app)/app/[companySlug]/planning/page.tsx");
+  const quotePage = await file("src/app/(app)/app/[companySlug]/quotes/[quoteId]/page.tsx");
+  const providerBoundary = await file("docs/architecture/planning-v1.md");
+  const runtimeProof = await file("tests/planning-tenant-isolation.sql");
+
+  assert.match(migration, /create table public\.planning_events/);
+  assert.doesNotMatch(migration, /alter table public\.(quotes|invoices|customers|conversations|tasks)\b/i);
+  assert.match(migration, /references public\.companies/);
+  assert.match(migration, /references public\.customers/);
+  assert.match(migration, /references public\.quotes/);
+  assert.match(migration, /references public\.invoices/);
+  assert.match(migration, /PLANNING_EVENT_QUOTE_TENANT_MISMATCH/);
+  assert.match(migration, /PLANNING_EVENT_CUSTOMER_TENANT_MISMATCH/);
+  assert.match(migration, /linked_quote_status <> 'accepted'/);
+  assert.match(migration, /alter table public\.planning_events enable row level security/);
+  assert.match(migration, /"planning managers create events"[\s\S]*?array\['owner', 'employee'\]/);
+  assert.match(migration, /grant select, insert, update on table public\.planning_events to authenticated/);
+  assert.doesNotMatch(migration, /grant .*delete .*planning_events/i);
+  assert.match(migration, /planning\.created/);
+  assert.match(migration, /planning\.updated/);
+  assert.match(migration, /planning\.cancelled/);
+  assert.match(route, /\.eq\("id", input\.data\.quoteId\)[\s\S]*?\.eq\("company_id", companyId\)/);
+  assert.match(route, /quote\.status !== "accepted"/);
+  assert.match(route, /customerId = quote\.customer_id/);
+  assert.doesNotMatch(route, /createAdminClient|SUPABASE_SECRET_KEY|SUPABASE_SERVICE_ROLE_KEY/);
+  assert.match(page, /\.from\("planning_events"\)[\s\S]*?\.eq\("company_id", company\.id\)/);
+  assert.match(quotePage, /quote\.status === "accepted"[\s\S]*?AddQuoteToPlanningButton/);
+  assert.match(providerBoundary, /geen provider-SDK, OAuth, credentials/i);
+  assert.doesNotMatch(route, /google|microsoft|oauth|calendar/i);
+  assert.match(runtimeProof, /PL1_RUNTIME_A_CAN_READ_B_EVENT/);
+  assert.match(runtimeProof, /PLANNING_EVENT_QUOTE_TENANT_MISMATCH/);
+  assert.match(runtimeProof, /PLANNING_EVENT_CUSTOMER_TENANT_MISMATCH/);
+  assert.match(runtimeProof, /rollback;/);
 });

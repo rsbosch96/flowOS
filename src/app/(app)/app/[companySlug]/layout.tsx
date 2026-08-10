@@ -7,6 +7,7 @@ import {
   LogOut,
   MessageSquare,
   Package,
+  CalendarDays,
   ReceiptText,
   Settings,
   Users,
@@ -51,6 +52,7 @@ export default async function CompanyLayout({
             <Nav href={`${root}/invoices`} icon={ReceiptText} label={t("navigation.invoices")} />
             <Nav href={`${root}/catalog`} icon={Package} label={t("navigation.products")} />
             <Nav href={`${root}/conversations`} icon={MessageSquare} label={t("navigation.requests")} />
+            <Nav href={`${root}/planning`} icon={CalendarDays} label="Planning" />
             <Nav href={`${root}/tasks`} icon={ListTodo} label={t("navigation.tasks")} />
             <Nav href={`${root}/team`} icon={Users} label={t("navigation.team")} />
             <Nav href={`${root}/settings`} icon={Settings} label={t("navigation.settings")} />

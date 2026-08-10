@@ -6,6 +6,7 @@ import { PublishQuoteButton } from "@/features/quotes/components/publish-quote-b
 import { EmailQuoteButton } from "@/features/quotes/components/email-quote-button";
 import { RemindQuoteButton } from "@/features/quotes/components/remind-quote-button";
 import { CreateInvoiceButton } from "@/features/quotes/components/create-invoice-button";
+import { AddQuoteToPlanningButton } from "@/features/planning/components/add-quote-to-planning-button";
 import { CustomerDetailsForm } from "@/features/customers/components/customer-details-form";
 import { QuoteEditor } from "@/features/quotes/components/quote-editor";
 import { quoteStatusLabel } from "@/lib/status-labels";
@@ -39,7 +40,7 @@ export default async function QuoteDetailPage({ params }: { params: Promise<{ co
     <Card>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div><p className="text-sm text-slate-600">{quote.quote_number}</p><h1 className="text-2xl font-semibold">{quote.title}</h1><p className="mt-1 text-sm text-slate-600">Voor {customer?.name}</p></div>
-        <div className="text-right"><p className="rounded-full bg-slate-100 px-3 py-1 text-sm">{quoteStatusLabel(quote.status)}</p>{quote.status === "draft" && <div className="mt-3"><ApproveQuoteButton companyId={company.id} quoteId={quote.id} /></div>}{quote.status === "approved" && <div className="mt-3 flex justify-end gap-2"><PublishQuoteButton companyId={company.id} quoteId={quote.id} /><EmailQuoteButton companyId={company.id} quoteId={quote.id} /></div>}{quote.status === "sent" && <div className="mt-3 flex justify-end gap-2"><EmailQuoteButton companyId={company.id} quoteId={quote.id} /><RemindQuoteButton companyId={company.id} quoteId={quote.id} /></div>}{quote.status === "accepted" && <div className="mt-3"><CreateInvoiceButton companyId={company.id} quoteId={quote.id} companySlug={companySlug} /></div>}</div>
+        <div className="text-right"><p className="rounded-full bg-slate-100 px-3 py-1 text-sm">{quoteStatusLabel(quote.status)}</p>{quote.status === "draft" && <div className="mt-3"><ApproveQuoteButton companyId={company.id} quoteId={quote.id} /></div>}{quote.status === "approved" && <div className="mt-3 flex justify-end gap-2"><PublishQuoteButton companyId={company.id} quoteId={quote.id} /><EmailQuoteButton companyId={company.id} quoteId={quote.id} /></div>}{quote.status === "sent" && <div className="mt-3 flex justify-end gap-2"><EmailQuoteButton companyId={company.id} quoteId={quote.id} /><RemindQuoteButton companyId={company.id} quoteId={quote.id} /></div>}{quote.status === "accepted" && <div className="mt-3"><CreateInvoiceButton companyId={company.id} quoteId={quote.id} companySlug={companySlug} /><AddQuoteToPlanningButton companyId={company.id} companySlug={companySlug} quoteId={quote.id} quoteNumber={quote.quote_number} quoteTitle={quote.title} /></div>}</div>
       </div>
       {quote.customer_comment && <p className="mt-4 rounded-md bg-blue-50 p-3 text-sm text-blue-900"><strong>Klantreactie:</strong> {quote.customer_comment}</p>}
       <pre className="mt-6 whitespace-pre-wrap font-sans text-sm leading-6 text-slate-700">{quote.notes}</pre>
