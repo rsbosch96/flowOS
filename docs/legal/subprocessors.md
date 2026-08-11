@@ -1,17 +1,32 @@
-# CONCEPT — LEGAL REVIEW RECOMMENDED BEFORE COMMERCIAL LAUNCH
+# CONCEPT — LEGAL REVIEW REQUIRED BEFORE REAL PERSONAL DATA
 
-# Subprocessor register
+# Subprocessorregister
 
-This register distinguishes code present in FlowOS from services active in the PRR1 pilot. CEO/legal must confirm contractual terms, regions and transfer safeguards before enabling or publishing the final register.
+Dit register beschrijft alleen de technisch bewezen status van FlowOS op
+`[EFFECTIVE_DATE]`. Het is geen ondertekend verwerkersregister. `[LEGAL_COMPANY_NAME]`
+en de juridisch adviseur bevestigen vóór een externe pilot met echte gegevens per
+actieve partij het contract, de verwerkersrol, locatie, doorgiften en eventuele
+passende waarborgen.
 
-| Provider | Service/purpose | Pilot status | Data categories | Location/transfer status |
+| Provider | Doel en gegevenscategorieën | Technische status | Bewezen locatie/status | Nog te bevestigen |
 | --- | --- | --- | --- | --- |
-| Supabase | Auth, PostgreSQL database, private Storage | active infrastructure | account, business/customer, quote/invoice, document and audit data | connected project: EU region (`eu-west-1`); contract review required |
-| Vercel | intended Next.js hosting | not yet provisioned | runtime requests and technical logs after activation | CEO/legal confirmation required |
-| OpenAI | AI quote generation | not active; pilot is mock-only | would receive prepared quote input if later enabled | legal/DPA/transfer review required before activation |
-| Resend | transactional e-mail | not active for pilot | would receive recipient/delivery content if enabled | legal/DPA/transfer review required before activation |
-| Stripe | subscriptions/payments | not active for pilot | would receive billing/payment data if enabled | legal/DPA/transfer review required before activation |
-| GitHub | source control/CI | development infrastructure; not an application runtime processor by current evidence | source/configuration metadata; no pilot customer data intended | CEO/legal confirmation required |
+| Supabase | Auth, PostgreSQL en private Storage: accounts, bedrijfs-, klant-, offerte-, factuur-, document- en auditgegevens | **ACTIEF** | Productieproject in `eu-west-2` | DPA, subverwerkers, opslaglocatie en doorgiften |
+| Vercel | Next.js-hosting en veilige runtime-/requestlogs | **ACTIEF** | FlowOS Production draait op Vercel | DPA, regio's, logretentie en doorgiften |
+| UptimeRobot | Beschikbaarheid van de generieke `/api/health`-endpoint en incidentmeldingen | **ACTIEF** | Externe monitor en down/recovery-proof zijn actief bewezen | DPA, alertcontact, logretentie en doorgiften |
+| OpenAI | Toekomstige AI-offertegeneratie | **UITGESCHAKELD** (`AI_MODE=mock`) | Geen echte provider-call toegestaan | Juridische grondslag, DPA, doorgiften, inputminimisering |
+| Resend | Toekomstige transactionele e-mail | **UITGESCHAKELD** | Geen e-mailverzending toegestaan | DPA, afzender, retentie, doorgiften |
+| Stripe | Toekomstige abonnementen/betalingen | **UITGESCHAKELD** | Geen betaalflow toegestaan | Rollen, DPA/voorwaarden, betaal- en fiscale bewaarplichten |
+| Google Calendar | Toekomstige agenda-integratie | **UITGESCHAKELD** | Geen providercode of credentials in Planning v1 | DPA, OAuth-scope, doorgiften |
+| Microsoft Calendar | Toekomstige agenda-integratie | **UITGESCHAKELD** | Geen providercode of credentials in Planning v1 | DPA, OAuth-scope, doorgiften |
 
-No raw public quote token is intentionally retained in application database, delivery metadata or audit logs.
+## Minimale wijzigingsprocedure
 
+1. Voeg een provider niet toe aan productie voordat `[LEGAL_COMPANY_NAME]` en
+   juridisch advies het doel, de gegevens en het contract hebben beoordeeld.
+2. Werk dit register, de verwerkersovereenkomst en de privacyverklaring bij.
+3. Leg een CEO-goedkeuring, datum, configuratiewijziging en eventuele
+   doorgiftebeslissing vast zonder secrets op te nemen.
+4. Test de provider eerst met synthetische data en zonder onnodige productiegegevens.
+
+FlowOS bewaart geen raw publieke offertoken in database-, audit- of
+deliverymetadata; de applicatie gebruikt een hash voor lookup.

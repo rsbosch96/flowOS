@@ -18,6 +18,22 @@ Primary support owner and privacy/security escalation: **CEO/Ramon**. Technical 
 4. Assess whether the event involves personal data, tenant isolation, documents, invoices or public quote links.
 5. Escalate suspected security/privacy incidents to the CEO immediately.
 
+## Privacy-escalatiepad
+
+Volg naast technische containment altijd deze volgorde wanneer persoonsgegevens
+mogelijk zijn geraakt:
+
+1. incident → mogelijke persoonsgegevensimpact;
+2. privacy-escalatie → relevante tenant/controller vaststellen;
+3. bewijs en reikwijdte veiligstellen → betrokken subprocessor vaststellen;
+4. juridische beoordeling → beslissing over eventuele meldingen en communicatie;
+5. vastleggen in [data-breach-record-template.md](./templates/data-breach-record-template.md)
+   → post-incident review.
+
+Dit pad doet **geen** voorafgaande juridische uitspraak over meldplicht of
+termijnen. Alleen de aangewezen juridische beslisser bepaalt die op basis van
+de feiten.
+
 ## Investigation and containment
 
 - Use Vercel structured server logs, request IDs, Supabase logs/health and audit records. Access to logs is limited to CEO/Ramon.

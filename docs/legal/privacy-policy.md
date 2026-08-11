@@ -1,34 +1,56 @@
-# CONCEPT — LEGAL REVIEW RECOMMENDED BEFORE COMMERCIAL LAUNCH
+# CONCEPT — NIET PUBLICEREN ZONDER JURIDISCHE REVIEW
 
-# Privacy statement for FlowOS pilot
+# Privacyverklaring FlowOS
 
-Last updated: `[date]`  
-Controller: `[legal entity name, address, KvK number]`  
-Privacy contact: `[privacy email]`
+Effectieve datum: `[EFFECTIVE_DATE]`
+Verwerkingsverantwoordelijke: `[LEGAL_COMPANY_NAME]`, handelend als `[TRADE_NAME]`
+Adres: `[BUSINESS_ADDRESS]`
+KvK: `[KVK_NUMBER]` · btw: `[VAT_NUMBER]`
+Privacycontact: `[PRIVACY_EMAIL]` · support: `[SUPPORT_EMAIL]`
 
-This concept describes the intended handling of personal data in the FlowOS pilot. It is not legal advice and must be completed and approved by counsel before publication or commercial use.
+Dit is een invulconcept. De rolverdeling, grondslagen, contactgegevens,
+bewaartermijnen, internationale doorgiften en tekst moeten vóór publicatie door
+een bevoegde juridische adviseur worden bevestigd.
 
-## What FlowOS processes
+## Welke gegevens en waarom
 
-FlowOS may process user-account data, company profile information, customer contact and address data, conversations/requests, quotes, invoices and their snapshots, uploaded documents, product data, audit/security events and technical usage metadata. Processing is limited to providing the quote-to-invoice workflow, security, support and legal obligations.
+FlowOS verwerkt, afhankelijk van gebruik, account- en toegangsgegevens,
+bedrijfsgegevens, klantcontact- en adresgegevens, aanvragen/gesprekken,
+offertes, facturen en snapshots, catalogusgegevens, planninggegevens, geüploade
+bestanden, audit/securitygegevens en beperkte technische metadata. De beoogde
+doelen zijn de offerte-tot-factuurdienst, tenantbeveiliging, ondersteuning,
+incidentbehandeling en toepasselijke verplichtingen. Zie het gedetailleerde
+[data processing map](./data-processing-map.md).
 
-The current pilot keeps AI in mock mode. No real OpenAI request is intended. Automatic e-mail and Stripe payments are disabled for the pilot. If any of those services are enabled later, this notice and the subprocessors list must be reviewed first.
+Voor klantgegevens van een installatiebedrijf is dat bedrijf doorgaans de
+verwerkingsverantwoordelijke en `[LEGAL_COMPANY_NAME]` doorgaans verwerker. Voor
+eigen account-, beveiligings- en supportadministratie kan
+`[LEGAL_COMPANY_NAME]` een eigen rol hebben. Dit moet per contract juridisch
+worden vastgesteld.
 
-## Roles and purposes
+## Actieve en uitgeschakelde diensten
 
-For customer/business data entered by an installation company, the installation company will normally be the controller and FlowOS operator normally the processor. For its own account, billing, security and support administration, the FlowOS operator may be controller. The exact roles and legal bases require legal confirmation.
+Supabase (Auth, database en private Storage), Vercel (hosting/runtime) en
+UptimeRobot (generieke healthmonitoring) zijn technisch actief. De productie-
+Supabase-regio is `eu-west-2`. OpenAI is uitgeschakeld (`AI_MODE=mock`); Resend,
+Stripe, Google Calendar en Microsoft Calendar zijn eveneens uitgeschakeld. Het
+subprocessorregister bevat de te beoordelen contractuele details.
 
-## Recipients and locations
+## Beveiliging, retentie en rechten
 
-Active application infrastructure includes Supabase for authentication, database and private file storage. Intended production hosting is Vercel, once provisioned. See [subprocessors.md](./subprocessors.md) for status and required review. No raw public quote token is stored as a database value; only a hash is used for lookup.
+FlowOS gebruikt tenantisolatie, rollen, private Storage, hashed publieke
+linktokens, auditlogging en rate limiting. Dit is geen garantie van absolute
+veiligheid. Bewaar- en verwijderbesluiten staan nog als concept in
+[data-retention.md](./data-retention.md).
 
-## Retention, security and rights
+Een betrokkene kan inzage, rectificatie, wissing, beperking, bezwaar of export
+verzoeken via `[PRIVACY_EMAIL]`. FlowOS verifieert de bevoegdheid en stemt
+verwerkersverzoeken af met de relevante klant/controller. De interne procedure
+staat in [data-subject-requests.md](../operations/data-subject-requests.md).
 
-Retention is governed by the proposed schedule in [data-retention.md](./data-retention.md), subject to legal approval. FlowOS applies tenant isolation, role controls, private Storage buckets, hashed public-link tokens, audit logging and rate limiting. No system can guarantee absolute security.
+## Wijzigingen en incidenten
 
-Data subjects may use `[privacy email]` for access, correction, deletion, restriction, objection or portability requests. The operator will verify authority before responding and coordinate processor requests with the relevant installation company.
-
-## Changes and incidents
-
-Material changes will be communicated through `[channel]`. Suspected personal-data incidents are handled through the internal incident procedure and escalated to the controller/legal advisers as required.
-
+Materiële wijzigingen worden bekendgemaakt via `[COMMUNICATION_CHANNEL — LEGAL
+REVIEW REQUIRED]`. Vermoedelijke incidenten met persoonsgegevens volgen de
+[incidentprocedure](../operations/incident-response.md); eventuele meldingen
+worden pas na juridische beoordeling bepaald.

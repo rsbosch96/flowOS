@@ -65,6 +65,19 @@ Een eerste echte drill moet via de normale FlowOS-uploadflow één onschadelijk 
 - Pas geen automatische verwijdering toe zonder CEO-goedkeuring en gecontroleerde retentieprocedure.
 - Bewijsbestanden bevatten geen wachtwoorden, JWT's, raw public tokens, service-role keys, Authorization-headers of klantdocumentinhoud.
 
+## Privacyafbakening
+
+- Backup-artifacts en manifests zijn gevoelige informatie: versleutel ze,
+  beperk toegang tot aangewezen backupowners en log alleen minimaal bewijs.
+- De herstelomgeving is eveneens gevoelig. Gebruik een geïsoleerd project,
+  synthetische controleaccounts waar mogelijk en laat OpenAI, Resend, Stripe en
+  kalenderproviders uitgeschakeld.
+- Een data-subject-verzoek kan gegevens in historische back-ups raken. Back-ups
+  worden niet per record herschreven; de kopie verdwijnt volgens de nog goed te
+  keuren retentie/rotatie.
+- Vernietiging van een artifact of herstelomgeving vereist een expliciete
+  goedkeuring en verificatie van het exacte doelobject.
+
 ## Voorbereiding van een hersteltest
 
 1. **[CEO APPROVAL]** Wijs een herstelvenster, operator, onafhankelijke controleur en doelomgeving toe.

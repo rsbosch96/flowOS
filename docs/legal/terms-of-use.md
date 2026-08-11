@@ -1,33 +1,35 @@
-# CONCEPT — LEGAL REVIEW RECOMMENDED BEFORE COMMERCIAL LAUNCH
+# CONCEPT — NIET GEREED VOOR ONDERTEKENING
 
-# FlowOS pilot terms of use
+# FlowOS pilotvoorwaarden
 
-Parties: `[FlowOS legal entity]` and `[pilot company]`  
-Effective date: `[date]`
+Partijen: `[LEGAL_COMPANY_NAME]` / `[TRADE_NAME]` en `[PILOT_COMPANY_LEGAL_NAME]`
+Effectieve datum: `[EFFECTIVE_DATE]`
+Contact: `[SUPPORT_EMAIL]`
 
-## Pilot scope
+Dit is een juridisch concept dat nog moet worden ingevuld, beoordeeld en
+ondertekend. Het bevat geen overeengekomen SLA, aansprakelijkheidsregeling,
+verwerkersovereenkomst of fiscale garantie.
 
-FlowOS is provided as a limited pilot for Dutch installation businesses. The agreed pilot scope includes organisation management, customer/request handling, catalog, mock-AI quote concepts, quote editing, public customer links, invoice creation/PDF and permitted invoice-status actions.
+## Pilotafbakening
 
-The pilot does **not** include live paid AI, automatic e-mail delivery, online payments, guaranteed service levels, or production-grade automated backup/PITR unless separately agreed in writing.
+De beoogde pilot omvat organisaties, klanten, aanvragen, catalogus, mock-AI
+conceptoffertes, offertebewerking, publieke klantlinks, facturen/PDF's,
+planning en toegestane factuurstatusacties. Live betaalde AI, automatische
+mailverzending, betalingen en externe kalenderproviders zijn uitgeschakeld.
 
-## Customer responsibilities
+## Verantwoordelijkheden
 
-The pilot company must provide accurate company, customer, product and pricing data; keep accounts secure; give only authorised users access; review every AI-assisted quote before sending; and remain responsible for commercial, tax, legal and technical correctness of its offers and invoices.
+De pilotklant beheert geautoriseerde gebruikers, controleert elke offerte,
+en blijft verantwoordelijk voor bedrijfs-, prijs-, fiscale en klantgegevens.
+`[LEGAL_COMPANY_NAME]` levert ondersteuning conform `[SUPPORT MODEL — LEGAL
+REVIEW REQUIRED]` en mag toegang beperken bij beveiligings- of
+integriteitsrisico's.
 
-## Availability and support
+## Data, einde pilot en recht
 
-Support channel, hours and response targets are: `[complete before pilot]`. The pilot may be interrupted for maintenance, security remediation or incident response. The operator will make reasonable efforts but gives no unapproved uptime, recovery-time or feature-completeness commitment.
-
-## Data and confidentiality
-
-Each party will protect confidential information. Personal-data processing is governed by the applicable DPA and privacy statement. Customer links must be treated as confidential; users must not publish them publicly.
-
-## Limitations and termination
-
-The pilot is experimental. The operator may suspend access to protect security, data integrity or legal compliance. Either party may end the pilot under `[notice terms]`. Export, deletion and retention handling must follow the approved retention policy and legal obligations.
-
-## Governing law
-
-`[Dutch law / competent court — legal review required]`
-
+Persoonsgegevens, subverwerkers en incidentafspraken worden geregeld in de
+nog te tekenen DPA en privacyverklaring. De eindprocedure, export,
+verwijdering, financiële bewaarplichten en back-ups volgen pas na goedkeuring
+van het retentie- en offboardingbeleid. Toepasselijk recht, bevoegde rechter,
+looptijd, opzegtermijn, aansprakelijkheid en intellectueel eigendom zijn
+`[LEGAL REVIEW REQUIRED]`.
