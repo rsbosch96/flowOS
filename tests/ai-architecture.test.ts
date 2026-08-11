@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
-import { readFile, readdir } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import test from "node:test";
 import { calculateAiCost, calculateAiCostDetails } from "../src/ai/costs.ts";
 import { AiBudgetStatus, type AiBudgetCostSnapshot } from "../src/ai/types.ts";
@@ -19,6 +22,7 @@ import { availableInvoiceStatusActions, conversationStatusLabel, invoiceStatusLa
 import { DatabaseHealthError, getHealthCheckDiagnostic, safeHealthProviderCode } from "../src/lib/health/diagnostics.ts";
 
 const file = (path: string) => readFile(resolve(process.cwd(), path), "utf8");
+const execFileAsync = promisify(execFile);
 const defaultRequest = {
   companyId: "company",
   userId: "user",
@@ -37,6 +41,65 @@ async function sourceFiles(directory: string): Promise<string[]> {
     : [join(directory, entry.name)]));
   return paths.flat().filter((path) => /\.(ts|tsx)$/.test(path));
 }
+
+test("backup tooling is read-only and its manifest contract excludes secrets", async () => {
+  const [runbook, manifestSchema, databaseSnapshot, storageInventory] = await Promise.all([
+    file("docs/operations/backup-restore.md"),
+    file("docs/operations/backup-manifest.schema.json"),
+    file("scripts/operations/backup-integrity-snapshot.sql"),
+    file("scripts/operations/storage-backup-inventory.sql"),
+  ]);
+
+  assert.match(runbook, /AI_MODE=mock/);
+  assert.match(runbook, /CEO APPROVAL/);
+  assert.match(runbook, /LEGAL POLICY REQUIRED/);
+  assert.match(manifestSchema, /flowos-backup-manifest/);
+  assert.doesNotMatch(manifestSchema, /service-role key|JWT|password|raw public quote token/i);
+
+  for (const query of [databaseSnapshot, storageInventory]) {
+    assert.match(query, /begin transaction read only;/i);
+    assert.match(query, /commit;/i);
+    assert.doesNotMatch(query, /\b(insert|update|delete|alter|create|drop|grant|revoke|truncate)\b/i);
+  }
+  assert.match(storageInventory, /tenantPrefixValid/);
+  assert.match(storageInventory, /'path', so\.name/);
+});
+
+test("backup snapshot comparison reports sections only and never echoes snapshot values", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "flowos-backup-tooling-"));
+  const sourcePath = join(directory, "source.json");
+  const restoredPath = join(directory, "restored.json");
+  const source = {
+    format: "flowos-integrity-snapshot",
+    formatVersion: 1,
+    migrationLedger: ["001"],
+    objects: { "public.companies": { exists: true, rlsEnabled: true } },
+    security: { policies: [] },
+    rowCounts: { companies: 1 },
+    financial: { invoiceFingerprintSha256: "a".repeat(64) },
+    relationships: { quotesWithCustomerTenantMismatch: 0 },
+    auth: { users: 1 },
+    storage: { buckets: [] },
+  };
+
+  try {
+    await writeFile(sourcePath, JSON.stringify(source), "utf8");
+    await writeFile(restoredPath, JSON.stringify({ ...source, financial: { invoiceFingerprintSha256: "b".repeat(64) } }), "utf8");
+    const result = await execFileAsync(process.execPath, [
+      "scripts/operations/compare-integrity-snapshots.mjs",
+      sourcePath,
+      restoredPath,
+    ], { cwd: process.cwd() });
+    assert.fail(`Expected a mismatch exit code, received: ${result.stdout}`);
+  } catch (error) {
+    const failure = error as { code?: number; stdout?: string };
+    assert.equal(failure.code, 1);
+    assert.match(failure.stdout ?? "", /"financial"/);
+    assert.doesNotMatch(failure.stdout ?? "", /aaaaaaaa|bbbbbbbb/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 test("quote generation route delegates AI lifecycle to the gateway", async () => {
   const route = await file("src/app/api/v1/companies/[companyId]/quotes/generate/route.ts");

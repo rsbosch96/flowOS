@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://flowos.example/schemas/backup-manifest-v1.json",
+  "title": "FlowOS encrypted backup manifest",
+  "description": "Schema only. Real manifests are encrypted operational artifacts and must never be committed.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "formatVersion",
+    "createdAt",
+    "release",
+    "migrationLedger",
+    "database",
+    "storage",
+    "integrity",
+    "encryption"
+  ],
+  "properties": {
+    "format": { "const": "flowos-backup-manifest" },
+    "formatVersion": { "const": 1 },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "release": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["gitCommit"],
+      "properties": { "gitCommit": { "type": "string", "minLength": 7, "maxLength": 64 } }
+    },
+    "migrationLedger": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["versions", "fingerprintSha256"],
+      "properties": {
+        "versions": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "fingerprintSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "database": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifactId", "format", "sha256", "encrypted"],
+      "properties": {
+        "artifactId": { "type": "string", "minLength": 8, "maxLength": 160 },
+        "format": { "type": "string", "enum": ["logical-dump", "managed-backup-export"] },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "encrypted": { "const": true }
+      }
+    },
+    "storage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["buckets", "objectCount", "objectsFingerprintSha256"],
+      "properties": {
+        "buckets": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "isPrivate", "objectCount", "objects"],
+            "properties": {
+              "name": { "type": "string", "enum": ["company-documents", "company-images"] },
+              "isPrivate": { "const": true },
+              "objectCount": { "type": "integer", "minimum": 0 },
+              "objects": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["path", "bytes", "sha256"],
+                  "properties": {
+                    "path": { "type": "string", "minLength": 1 },
+                    "bytes": { "type": "integer", "minimum": 0 },
+                    "sha256": { "$ref": "#/$defs/sha256" }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "objectCount": { "type": "integer", "minimum": 0 },
+        "objectsFingerprintSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "integrity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["snapshotArtifactId", "snapshotSha256"],
+      "properties": {
+        "snapshotArtifactId": { "type": "string", "minLength": 8, "maxLength": 160 },
+        "snapshotSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "encryption": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["atRest", "algorithm", "keyReference"],
+      "properties": {
+        "atRest": { "const": true },
+        "algorithm": { "type": "string", "minLength": 3, "maxLength": 80 },
+        "keyReference": { "type": "string", "minLength": 3, "maxLength": 160 }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[A-Fa-f0-9]{64}$" }
+  }
+}
