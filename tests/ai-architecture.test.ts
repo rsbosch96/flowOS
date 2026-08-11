@@ -1168,3 +1168,45 @@ test("PL1 keeps Planning additive, tenant-bound and provider-neutral", async () 
   assert.match(runtimeProof, /PLANNING_EVENT_CUSTOMER_TENANT_MISMATCH/);
   assert.match(runtimeProof, /rollback;/);
 });
+
+test("ENT1 keeps Core implicit and narrows Planning at navigation, API and RLS boundaries", async () => {
+  const migration = await file("supabase/migrations/20260811072007_module_entitlements_foundation.sql");
+  const modules = await file("src/lib/entitlements/modules.ts");
+  const helper = await file("src/lib/entitlements/server.ts");
+  const layout = await file("src/app/(app)/app/[companySlug]/layout.tsx");
+  const page = await file("src/app/(app)/app/[companySlug]/planning/page.tsx");
+  const route = await file("src/app/api/v1/companies/[companyId]/planning-events/route.ts");
+  const quotePage = await file("src/app/(app)/app/[companySlug]/quotes/[quoteId]/page.tsx");
+  const runtimeProof = await file("tests/entitlements-postgrest-runtime.mjs");
+
+  assert.match(migration, /create table public\.module_catalog/);
+  assert.match(migration, /create table public\.company_module_entitlements/);
+  assert.match(migration, /primary key \(company_id, module_key\)/);
+  assert.match(migration, /insert into public\.module_catalog[\s\S]*?'planning'/);
+  assert.match(migration, /insert into public\.company_module_entitlements[\s\S]*?from public\.companies/);
+  assert.match(migration, /on conflict \(company_id, module_key\) do nothing/);
+  assert.match(migration, /target_module_key = 'core'/);
+  assert.match(migration, /revoke all on table public\.module_catalog from public, anon, authenticated, service_role/);
+  assert.match(migration, /revoke all on table public\.company_module_entitlements from public, anon, authenticated, service_role/);
+  assert.match(migration, /revoke all on function public\.has_company_module\(uuid, text\)[\s\S]*?grant execute on function public\.has_company_module\(uuid, text\) to authenticated/);
+  assert.match(migration, /drop policy if exists "planning members read events"[\s\S]*?drop policy if exists "planning managers create events"[\s\S]*?drop policy if exists "planning managers update events"/);
+  assert.match(migration, /create policy "planning members read events"[\s\S]*?is_company_member\(company_id\)[\s\S]*?has_company_module\(company_id, 'planning'\)/);
+  assert.match(migration, /create policy "planning managers create events"[\s\S]*?has_company_module\(company_id, 'planning'\)[\s\S]*?has_company_role/);
+  assert.match(migration, /module_entitlement\.granted/);
+  assert.match(migration, /module_entitlement\.revoked/);
+  assert.doesNotMatch(migration, /alter table public\.(quotes|invoices|customers|conversations|tasks)\b/i);
+
+  assert.match(modules, /"core", "planning"/);
+  assert.match(helper, /import "server-only"/);
+  assert.match(helper, /rpc\("has_company_module"/);
+  assert.match(helper, /return !error && data === true/);
+  assert.match(layout, /planningEnabled && <Nav href=\{`\$\{root\}\/planning`\}/);
+  assert.match(page, /hasCompanyModule\(supabase, company\.id, planningModule\).*notFound/);
+  assert.match(route, /PLANNING_MODULE_DISABLED/);
+  assert.match(quotePage, /planningEnabled && <AddQuoteToPlanningButton/);
+  assert.match(runtimeProof, /local PostgREST\/Data API/);
+  assert.match(runtimeProof, /revokedMemberSelect: "denied"/);
+  assert.match(runtimeProof, /coreWithoutPlanning: "accepted_without_planning_event"/);
+  assert.match(runtimeProof, /\["GET", "POST", "PATCH"\]/);
+  assert.match(runtimeProof, /module catalog write access/);
+});

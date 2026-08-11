@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { planningEventTypes } from "@/features/planning/domain/planning";
+import { planningModule } from "@/lib/entitlements/modules";
+import { hasCompanyModule } from "@/lib/entitlements/server";
 import { logServerEvent, withApiRequest } from "@/lib/observability/server";
 import { createClient } from "@/lib/supabase/server";
 
@@ -51,7 +53,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ com
     const { companyId } = await params;
     const { supabase, user, membership } = await requirePlanningManager(companyId);
     if (!user) return NextResponse.json({ error: { code: "AUTH_REQUIRED", message: "Log opnieuw in." } }, { status: 401 });
-    if (!membership || membership.role === "technician") return NextResponse.json({ error: { code: "PLANNING_FORBIDDEN", message: "Je mag geen planning aanpassen." } }, { status: 403 });
+    if (!membership) return NextResponse.json({ error: { code: "PLANNING_FORBIDDEN", message: "Je hebt geen toegang tot deze organisatie." } }, { status: 403 });
+    if (!await hasCompanyModule(supabase, companyId, planningModule)) return NextResponse.json({ error: { code: "PLANNING_MODULE_DISABLED", message: "Planning is niet beschikbaar voor deze organisatie." } }, { status: 403 });
+    if (membership.role === "technician") return NextResponse.json({ error: { code: "PLANNING_FORBIDDEN", message: "Je mag geen planning aanpassen." } }, { status: 403 });
 
     let customerId = input.data.customerId ?? null;
     let sourceType: "manual" | "quote" = "manual";
@@ -123,7 +127,9 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ co
     const { companyId } = await params;
     const { supabase, user, membership } = await requirePlanningManager(companyId);
     if (!user) return NextResponse.json({ error: { code: "AUTH_REQUIRED", message: "Log opnieuw in." } }, { status: 401 });
-    if (!membership || membership.role === "technician") return NextResponse.json({ error: { code: "PLANNING_FORBIDDEN", message: "Je mag geen planning aanpassen." } }, { status: 403 });
+    if (!membership) return NextResponse.json({ error: { code: "PLANNING_FORBIDDEN", message: "Je hebt geen toegang tot deze organisatie." } }, { status: 403 });
+    if (!await hasCompanyModule(supabase, companyId, planningModule)) return NextResponse.json({ error: { code: "PLANNING_MODULE_DISABLED", message: "Planning is niet beschikbaar voor deze organisatie." } }, { status: 403 });
+    if (membership.role === "technician") return NextResponse.json({ error: { code: "PLANNING_FORBIDDEN", message: "Je mag geen planning aanpassen." } }, { status: 403 });
 
     const { data: existing, error: existingError } = await supabase.from("planning_events")
       .select("id,status")

@@ -13,6 +13,9 @@ import {
   Users,
 } from "lucide-react";
 import { getTranslations } from "@/i18n/get-translations";
+import { planningModule } from "@/lib/entitlements/modules";
+import { hasCompanyModule } from "@/lib/entitlements/server";
+import { createClient } from "@/lib/supabase/server";
 
 export default async function CompanyLayout({
   children,
@@ -24,6 +27,9 @@ export default async function CompanyLayout({
   const { companySlug } = await params;
   const root = `/app/${companySlug}`;
   const { t } = getTranslations();
+  const supabase = await createClient();
+  const { data: company } = await supabase.from("companies").select("id").eq("slug", companySlug).maybeSingle();
+  const planningEnabled = company ? await hasCompanyModule(supabase, company.id, planningModule) : false;
 
   return (
     <div className="min-h-screen">
@@ -52,7 +58,7 @@ export default async function CompanyLayout({
             <Nav href={`${root}/invoices`} icon={ReceiptText} label={t("navigation.invoices")} />
             <Nav href={`${root}/catalog`} icon={Package} label={t("navigation.products")} />
             <Nav href={`${root}/conversations`} icon={MessageSquare} label={t("navigation.requests")} />
-            <Nav href={`${root}/planning`} icon={CalendarDays} label="Planning" />
+            {planningEnabled && <Nav href={`${root}/planning`} icon={CalendarDays} label="Planning" />}
             <Nav href={`${root}/tasks`} icon={ListTodo} label={t("navigation.tasks")} />
             <Nav href={`${root}/team`} icon={Users} label={t("navigation.team")} />
             <Nav href={`${root}/settings`} icon={Settings} label={t("navigation.settings")} />
