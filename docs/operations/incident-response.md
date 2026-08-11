@@ -1,11 +1,13 @@
 # Incident response runbook
 
-## Severity
+## Ownership and severity
+
+Primary support owner and privacy/security escalation: **CEO/Ramon**. Technical backup: **NOT ASSIGNED (open operational risk)**. The CEO is the only authorised log-access owner.
 
 | Severity | Example | Initial response target |
 | --- | --- | --- |
 | SEV-1 | suspected data breach, cross-tenant access, total outage | immediately |
-| SEV-2 | primary flow broken for a tenant, incorrect financial state risk | within 1 hour |
+| SEV-2 | core customer workflow materially broken or an entitled module unavailable for a customer; incorrect financial state risk | within 4 support-hours |
 | SEV-3 | degraded/non-critical feature, workaround available | same business day |
 
 ## First 15 minutes
@@ -18,10 +20,10 @@
 
 ## Investigation and containment
 
-- Use structured server logs, request IDs, Supabase logs/health and audit records.
+- Use Vercel structured server logs, request IDs, Supabase logs/health and audit records. Access to logs is limited to CEO/Ramon.
 - Do not place secrets, raw public tokens, full documents, customer message content or credentials in incident notes.
 - For a tenant-isolation issue, stop affected public routes or deployment traffic first, then preserve evidence.
-- For an external integration issue, keep AI mock-only and disable mail/payment credentials as applicable.
+- For an external integration issue, keep AI mock-only. OpenAI, Resend, Stripe and calendar providers are disabled for the current pilot.
 
 ## Communication
 

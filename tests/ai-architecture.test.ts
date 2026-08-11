@@ -16,6 +16,7 @@ import { calculateVatSpecification } from "../src/features/invoices/infrastructu
 import { readRuntimeConfig, RuntimeConfigError } from "../src/lib/config/runtime.ts";
 import { sanitizeLogContext } from "../src/lib/observability/sanitize.ts";
 import { availableInvoiceStatusActions, conversationStatusLabel, invoiceStatusLabel, quoteStatusLabel, taskStatusLabel } from "../src/lib/status-labels.ts";
+import { DatabaseHealthError, getHealthCheckDiagnostic, safeHealthProviderCode } from "../src/lib/health/diagnostics.ts";
 
 const file = (path: string) => readFile(resolve(process.cwd(), path), "utf8");
 const defaultRequest = {
@@ -912,12 +913,13 @@ test("OR1 health endpoint is read-only, bounded and never returns Supabase confi
   const databaseCheck = await file("src/lib/health/server.ts");
 
   assert.match(route, /export async function GET/);
-  assert.match(route, /status: "ok"/);
-  assert.match(route, /checks: \{ app: "ok", database: "ok" \}/);
-  assert.match(route, /status: 503/);
-  assert.match(route, /checks: \{ app: "ok", database: "error" \}/);
-  assert.match(route, /checkDatabaseHealth/);
+  assert.match(route, /getHealthResponse\(request\)/);
   assert.doesNotMatch(route, /SUPABASE_|OPENAI_|process\.env|project[-_]?ref|stack/i);
+  assert.match(databaseCheck, /status: "ok"/);
+  assert.match(databaseCheck, /checks: \{ app: "ok", database: "ok" \}/);
+  assert.match(databaseCheck, /status: 503/);
+  assert.match(databaseCheck, /checks: \{ app: "ok", database: "error" \}/);
+  assert.match(databaseCheck, /checkDatabaseHealth/);
   assert.match(databaseCheck, /AbortController/);
   assert.match(databaseCheck, /HEALTH_TIMEOUT_MS = 2_000/);
   assert.match(databaseCheck, /from\("companies"\)\.select\("id", \{ head: true, count: "exact" \}\)\.limit\(1\)/);
@@ -1209,4 +1211,49 @@ test("ENT1 keeps Core implicit and narrows Planning at navigation, API and RLS b
   assert.match(runtimeProof, /coreWithoutPlanning: "accepted_without_planning_event"/);
   assert.match(runtimeProof, /\["GET", "POST", "PATCH"\]/);
   assert.match(runtimeProof, /module catalog write access/);
+});
+
+test("MON1 classifies safe Supabase API, timeout and unexpected health diagnostics", async () => {
+  const apiError = new DatabaseHealthError({
+    category: "supabase_api_error",
+    durationMs: 15,
+    providerCode: "PGRST002",
+  });
+  assert.deepEqual(getHealthCheckDiagnostic(apiError), {
+    category: "supabase_api_error",
+    durationMs: 15,
+    providerCode: "PGRST002",
+  });
+  assert.equal(safeHealthProviderCode("PGRST002"), "PGRST002");
+  assert.equal(safeHealthProviderCode("42P01"), "42P01");
+  assert.equal(safeHealthProviderCode("secret-or-provider-message"), undefined);
+
+  assert.deepEqual(getHealthCheckDiagnostic(new DatabaseHealthError({ category: "timeout", durationMs: 2_000 })), {
+    category: "timeout",
+    durationMs: 2_000,
+  });
+  assert.deepEqual(getHealthCheckDiagnostic(new Error("sb_secret_must_not_be_logged")), {
+    category: "unexpected_error",
+    durationMs: 0,
+  });
+});
+
+test("MON1 health route keeps diagnostic data in safe logs and generic public responses", async () => {
+  const health = await file("src/lib/health/server.ts");
+  const route = await file("src/app/api/health/route.ts");
+
+  assert.match(health, /health\.database_unhealthy/);
+  assert.match(health, /requestId/);
+  assert.match(health, /category: diagnostic\.category/);
+  assert.match(health, /durationMs: diagnostic\.durationMs/);
+  assert.match(health, /providerCode: diagnostic\.providerCode/);
+  assert.match(health, /category: timedOut \|\| isAbortError\(error\) \? "timeout" : "unexpected_error"/);
+  assert.match(health, /category: "supabase_api_error"/);
+  assert.doesNotMatch(health, /error\.message|error\.details|error\.hint|Authorization|supabaseAnonKey.*log/i);
+  assert.match(route, /return getHealthResponse\(request\)/);
+  assert.match(health, /status: "ok"/);
+  assert.match(health, /status: "unhealthy"/);
+  assert.match(health, /database: "error"/);
+  assert.match(health, /status: 503/);
+  assert.doesNotMatch(health, /status: "unhealthy"[\s\S]{0,300}category/);
 });

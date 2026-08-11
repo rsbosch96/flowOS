@@ -2,21 +2,14 @@
 
 ## Pilot contact model
 
-Before inviting a pilot company, the CEO must assign:
-
-- one named business/support contact;
-- one technical escalation contact;
-- a pilot support mailbox or contact form;
-- expected support hours and response targets.
-
-Until these are filled in, do not publish this document externally.
-
-| Item | Required value before pilot |
+| Item | Current pilot value |
 | --- | --- |
-| Support contact | `[name / mailbox]` |
-| Technical escalation | `[name / phone or mailbox]` |
-| Privacy contact | `[privacy email]` |
-| Support hours | `[hours / timezone]` |
+| Support contact | CEO/Ramon |
+| Technical escalation | **NOT ASSIGNED — open risk** |
+| Privacy/security contact | CEO/Ramon |
+| Alert/support destination | **OPEN — dedicated business inbox still required** |
+| Support hours | Monday–Friday, 09:00–18:00 Europe/Amsterdam |
+| Initial review target | Within 4 hours during support hours; internal target, not a contractual SLA |
 
 ## Intake template
 
@@ -34,5 +27,5 @@ Collect only: company name, contact method, affected feature, time, steps to rep
 
 ## Pilot boundaries
 
-The initial pilot uses mock AI, manual sharing of customer links, no automatic Resend delivery and no Stripe checkout. Support must not promise live AI, email delivery, payments, recovery-time objectives or legal/compliance guarantees not yet approved.
+The initial pilot uses mock AI, manual sharing of customer links, no automatic Resend delivery, no Stripe checkout and no external calendar provider. Planning v1 is available only when the organisation has the Planning entitlement. Support must not promise live AI, email delivery, payments, recovery-time objectives or legal/compliance guarantees not yet approved.
 

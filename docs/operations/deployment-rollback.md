@@ -2,7 +2,7 @@
 
 ## Deployment model
 
-Recommended pilot model: Vercel production deployment from protected `main`, with GitHub Actions quality gates. This is a proposed operating model; no hosting provider is configured by this document.
+FlowOS is deployed on Vercel Production from `main`, backed by Supabase Production. Core, Planning v1 and ENT1 are production-proven. Preview deployments use staging Supabase; Production and Preview must never share credentials. AI remains mock-only; OpenAI, Resend, Stripe and external calendar providers are disabled.
 
 ## Pre-deployment gates
 
@@ -29,7 +29,7 @@ Rollback immediately for authentication failures, cross-tenant exposure, failed 
 ## Application rollback
 
 1. Pause new deployments and record the incident/request IDs.
-2. In the hosting provider, promote/redeploy the most recent known-good production deployment. Do not modify database data as part of an application-only rollback.
+2. In Vercel, promote or redeploy the most recent known-good production deployment. Do not modify database data as part of an application-only rollback.
 3. Recheck `/api/health` and the affected safe smoke path.
 4. Inform pilot users using the approved support process if impact occurred.
 5. Preserve logs and create an incident record.
