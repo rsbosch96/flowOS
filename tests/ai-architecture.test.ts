@@ -20,6 +20,7 @@ import { readRuntimeConfig, RuntimeConfigError } from "../src/lib/config/runtime
 import { sanitizeLogContext } from "../src/lib/observability/sanitize.ts";
 import { availableInvoiceStatusActions, conversationStatusLabel, invoiceStatusLabel, quoteStatusLabel, taskStatusLabel } from "../src/lib/status-labels.ts";
 import { DatabaseHealthError, getHealthCheckDiagnostic, safeHealthProviderCode } from "../src/lib/health/diagnostics.ts";
+import { registrationErrorCategory, registrationErrorMessage } from "../src/features/auth/infrastructure/registration-error.ts";
 
 const file = (path: string) => readFile(resolve(process.cwd(), path), "utf8");
 const execFileAsync = promisify(execFile);
@@ -106,6 +107,29 @@ test("quote generation route delegates AI lifecycle to the gateway", async () =>
   assert.match(route, /import\s+\{\s*runAi\s*\}\s+from\s+"@\/ai\/gateway"/);
   assert.match(route, /await runAi\(/);
   assert.doesNotMatch(route, /start_ai_run|finish_ai_run|openai-provider|OpenAiProvider/);
+});
+
+test("registration maps Supabase Auth failures without exposing provider messages or passwords", async () => {
+  const rawProviderMessage = "Password hunter2 appears in a breached provider response";
+  const cases = [
+    [{ name: "WeakPasswordError", code: "weak_password", message: rawProviderMessage }, "weak_password", "Dit wachtwoord kan niet worden gebruikt. Kies een ander sterk wachtwoord."],
+    [{ code: "user_already_exists", message: "User already registered" }, "account_conflict", "Registreren is niet gelukt. Controleer je gegevens of probeer het later opnieuw."],
+    [{ code: "over_request_rate_limit", status: 429, message: "Too many requests" }, "rate_limited", "Te veel pogingen. Probeer het later opnieuw."],
+    [{ code: "unexpected_auth_provider_failure", message: "Authentication service temporarily unavailable" }, "unknown", "Registreren is niet gelukt. Probeer het opnieuw."],
+  ] as const;
+
+  for (const [error, category, message] of cases) {
+    assert.equal(registrationErrorCategory(error), category);
+    assert.equal(registrationErrorMessage(error), message);
+    assert.doesNotMatch(registrationErrorMessage(error), /hunter2|provider response|already registered|too many requests/i);
+  }
+
+  const form = await file("src/features/auth/components/register-form.tsx");
+  const mapper = await file("src/features/auth/infrastructure/registration-error.ts");
+  assert.match(form, /setError\(registrationErrorMessage\(error\)\)/);
+  assert.doesNotMatch(form, /setError\(error\.message\)/);
+  assert.doesNotMatch(form, /console\.(?:log|error|warn)/);
+  assert.doesNotMatch(mapper, /console\.(?:log|error|warn)/);
 });
 
 test("quote generation exposes typed, safe AI failures to the user interface", async () => {
