@@ -26,6 +26,15 @@ the request ID, duration, a safe failure category and safe provider/PostgREST
 code where available. Never add URLs, keys, JWTs, headers, connection strings,
 customer data, SQL or raw provider responses to logs.
 
+## Incident correlation sequence
+
+For a non-200 health result, record the UTC time and the `x-request-id` from
+the response where present. Search Vercel runtime logs by that ID and time
+window, then inspect the matching Supabase API/Postgres log window. Treat time
+correlation as a lead, not proof of cause. Store only the request ID and safe
+error category in the incident record; never copy headers, credentials, tokens
+or raw provider responses.
+
 ## External uptime monitor
 
 **UptimeRobot is active** for HTTPS checks every five minutes against the
