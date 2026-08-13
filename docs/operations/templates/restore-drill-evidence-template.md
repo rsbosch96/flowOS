@@ -58,3 +58,12 @@ CEO target: `PASS / FAIL` — doel nog vast te stellen.
 - CEO-besluit:
 - Vernietiging tijdelijke recoveryomgeving goedgekeurd: JA / NEE
 - Bewijsretentie/einddatum:
+
+## Vernietigingsbewijs (na afzonderlijke goedkeuring)
+
+- CEO/authorized operator bevestigt bewijs vastgelegd: JA / NEE
+- Tijdelijke recovery-identiteiten verwijderd: PASS / FAIL
+- Tijdelijke recovery-credentials ingetrokken: PASS / FAIL
+- Lokale tijdelijke plaintext vernietigd: PASS / FAIL
+- Recoveryproject vernietigd: PASS / FAIL
+- Versleuteld backupartifact behouden volgens goedgekeurde retentie: PASS / FAIL

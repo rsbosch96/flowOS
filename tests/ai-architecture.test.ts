@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { execFile } from "node:child_process";
@@ -20,6 +20,10 @@ import { readRuntimeConfig, RuntimeConfigError } from "../src/lib/config/runtime
 import { sanitizeLogContext } from "../src/lib/observability/sanitize.ts";
 import { availableInvoiceStatusActions, conversationStatusLabel, invoiceStatusLabel, quoteStatusLabel, taskStatusLabel } from "../src/lib/status-labels.ts";
 import { DatabaseHealthError, getHealthCheckDiagnostic, safeHealthProviderCode } from "../src/lib/health/diagnostics.ts";
+import { buildBackupManifest, validateBackupManifest } from "../scripts/operations/create-backup-manifest.mjs";
+import { createArtifactInventory, verifyArtifactInventory } from "../scripts/operations/hash-backup-artifacts.mjs";
+import { RECOVERY_CONFIRMATION, RecoverySafetyError, assertRecoveryProviderKillSwitch, assertSafeRecoveryTarget } from "../scripts/operations/recovery-safety.mjs";
+import { exportStorageFixture, restoreStorageFixture, verifyStorageArtifact } from "../scripts/operations/storage-backup-local.mjs";
 
 const file = (path: string) => readFile(resolve(process.cwd(), path), "utf8");
 const execFileAsync = promisify(execFile);
@@ -96,6 +100,78 @@ test("backup snapshot comparison reports sections only and never echoes snapshot
     assert.equal(failure.code, 1);
     assert.match(failure.stdout ?? "", /"financial"/);
     assert.doesNotMatch(failure.stdout ?? "", /aaaaaaaa|bbbbbbbb/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("BR1D fails closed for protected recovery targets and live provider configuration", () => {
+  assert.throws(() => assertSafeRecoveryTarget({ environmentType: "recovery", targetProjectId: "ivifmemxvgglvnnarubt", confirmation: RECOVERY_CONFIRMATION }), RecoverySafetyError);
+  assert.throws(() => assertSafeRecoveryTarget({ environmentType: "staging", targetProjectId: "isolated-recovery-001", confirmation: RECOVERY_CONFIRMATION }), RecoverySafetyError);
+  assert.deepEqual(assertSafeRecoveryTarget({ environmentType: "recovery", targetProjectId: "isolated-recovery-001", confirmation: RECOVERY_CONFIRMATION }), { environmentType: "recovery", targetProjectId: "isolated-recovery-001" });
+  assert.deepEqual(assertRecoveryProviderKillSwitch({ AI_MODE: "mock" }), { aiMode: "mock", providersDisabled: true });
+  assert.throws(() => assertRecoveryProviderKillSwitch({ AI_MODE: "mock", OPENAI_API_KEY: "synthetic-only" }), (error: unknown) => {
+    assert.match(String(error), /OPENAI_API_KEY/);
+    assert.doesNotMatch(String(error), /synthetic-only/);
+    return true;
+  });
+  assert.throws(() => assertRecoveryProviderKillSwitch({ AI_MODE: "live" }), /AI_MODE=mock/);
+});
+
+test("BR1D hashes artifacts deterministically, rejects corruption and validates a secret-free manifest", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "flowos-br1d-artifacts-"));
+  try {
+    await mkdir(join(directory, "nested"));
+    await writeFile(join(directory, "b.txt"), "synthetic-b", "utf8");
+    await writeFile(join(directory, "nested", "a.txt"), "synthetic-a", "utf8");
+    const inventory = await createArtifactInventory(directory);
+    assert.deepEqual(inventory.entries.map((entry) => entry.path), ["b.txt", "nested/a.txt"]);
+    assert.equal((await verifyArtifactInventory(directory, inventory)).status, "match");
+    await writeFile(join(directory, "b.txt"), "synthetic-corruption", "utf8");
+    await assert.rejects(() => verifyArtifactInventory(directory, inventory), /checksum verification failed/);
+
+    const manifest = buildBackupManifest({
+      backupId: "20260813-br1d-synthetic",
+      createdAt: "2026-08-13T12:00:00.000Z",
+      source: { projectId: "synthetic-source-001", region: "local-test" },
+      release: { gitCommit: "d14abc96cf92080eea45dee66c36875cc6b4b7de" },
+      migrationLedger: { versions: ["001", "034"] },
+      database: { artifactId: "synthetic-database", format: "logical-dump", sha256: "a".repeat(64), encrypted: true },
+      storage: { buckets: [
+        { name: "company-images", isPrivate: true, objects: [] },
+        { name: "company-documents", isPrivate: true, objects: [{ path: "tenant-a/file.txt", bytes: 3, sha256: "b".repeat(64) }] },
+      ] },
+      integrity: { snapshotArtifactId: "synthetic-integrity", snapshotSha256: "c".repeat(64) },
+      encryption: { atRest: true, algorithm: "age", keyReference: "approved-key-reference" },
+      operator: { role: "backup-operator" },
+      providerKillSwitch: { confirmed: true, aiMode: "mock" },
+      validation: { status: "validated" },
+    });
+    assert.equal(validateBackupManifest(manifest), true);
+    assert.throws(() => validateBackupManifest({ ...manifest, password: "not-allowed" }), /unsupported fields/);
+    assert.doesNotMatch(JSON.stringify(manifest), /password|token|secret|synthetic-a|synthetic-b/i);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("BR1D local Storage adapter preserves private bucket paths and verifies the restored bytes", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "flowos-br1d-storage-"));
+  const source = join(directory, "source");
+  const artifact = join(directory, "artifact");
+  const target = join(directory, "target");
+  try {
+    await mkdir(join(source, "company-documents", "tenant-a"), { recursive: true });
+    await mkdir(join(source, "company-images", "tenant-b"), { recursive: true });
+    await writeFile(join(source, "company-documents", "tenant-a", "proof.txt"), "synthetic document", "utf8");
+    await writeFile(join(source, "company-images", "tenant-b", "image.bin"), "synthetic image", "utf8");
+    const exported = await exportStorageFixture({ sourceDirectory: source, artifactDirectory: artifact });
+    assert.equal(exported.objectCount, 2);
+    assert.equal((await verifyStorageArtifact({ artifactDirectory: artifact })).status, "match");
+    const restored = await restoreStorageFixture({ artifactDirectory: artifact, targetDirectory: target, targetProjectId: "isolated-recovery-002", environmentType: "recovery", confirmation: RECOVERY_CONFIRMATION });
+    assert.deepEqual(restored, { status: "restored", objectCount: 2 });
+    assert.equal(await readFile(join(target, "company-documents", "tenant-a", "proof.txt"), "utf8"), "synthetic document");
+    await assert.rejects(() => restoreStorageFixture({ artifactDirectory: artifact, targetDirectory: target, targetProjectId: "isolated-recovery-002", environmentType: "recovery", confirmation: RECOVERY_CONFIRMATION }), /refuses to overwrite/);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

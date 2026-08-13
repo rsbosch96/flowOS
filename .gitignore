@@ -36,3 +36,8 @@ outputs/
 # Lokale werkbestanden
 work/
 .vercel
+
+# BR1D generated recovery artifacts. Never commit dumps, manifests, encrypted
+# archives, Storage copies or recovery credentials.
+backup-artifacts/
+recovery-artifacts/

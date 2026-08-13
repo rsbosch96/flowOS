@@ -8,18 +8,33 @@
   "required": [
     "format",
     "formatVersion",
+    "backupId",
     "createdAt",
+    "source",
     "release",
     "migrationLedger",
     "database",
     "storage",
     "integrity",
-    "encryption"
+    "encryption",
+    "operator",
+    "providerKillSwitch",
+    "validation"
   ],
   "properties": {
     "format": { "const": "flowos-backup-manifest" },
     "formatVersion": { "const": 1 },
+    "backupId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{7,159}$" },
     "createdAt": { "type": "string", "format": "date-time" },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["projectId", "region"],
+      "properties": {
+        "projectId": { "type": "string", "minLength": 8, "maxLength": 80 },
+        "region": { "type": "string", "minLength": 2, "maxLength": 80 }
+      }
+    },
     "release": {
       "type": "object",
       "additionalProperties": false,
@@ -100,6 +115,27 @@
         "algorithm": { "type": "string", "minLength": 3, "maxLength": 80 },
         "keyReference": { "type": "string", "minLength": 3, "maxLength": 160 }
       }
+    },
+    "operator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role"],
+      "properties": { "role": { "type": "string", "minLength": 2, "maxLength": 80 } }
+    },
+    "providerKillSwitch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["confirmed", "aiMode"],
+      "properties": {
+        "confirmed": { "const": true },
+        "aiMode": { "const": "mock" }
+      }
+    },
+    "validation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": { "status": { "const": "validated" } }
     }
   },
   "$defs": {

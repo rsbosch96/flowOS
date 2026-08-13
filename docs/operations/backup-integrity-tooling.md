@@ -10,6 +10,10 @@ Deze tooling vergelijkt een bronmoment met een herstelde omgeving. Zij maakt gee
 | `scripts/operations/storage-backup-inventory.sql` | Read-only Storage-inventaris en private-bucketcontrole. |
 | `scripts/operations/compare-integrity-snapshots.mjs` | Lokale vergelijker van twee versleuteld bewaarde snapshot-JSON-bestanden. |
 | `docs/operations/backup-manifest.schema.json` | Contract voor het versleutelde backupmanifest. |
+| `scripts/operations/hash-backup-artifacts.mjs` | Netwerkvrije, deterministische SHA-256-inventaris en verificatie van lokale artifacts. |
+| `scripts/operations/create-backup-manifest.mjs` | Netwerkvrije generator die metadata valideert voordat een manifest wordt geschreven. |
+| `scripts/operations/storage-backup-local.mjs` | Lokale/mock Storage-export en -restore voor de toekomstige procedure; geen Supabase-client. |
+| `scripts/operations/recovery-safety.mjs` | Fail-closed guard voor recoverydoelen en provider-kill-switches. |
 
 ## Toekomstige veilige uitvoering
 
@@ -37,6 +41,20 @@ De snapshots bevatten geen documentinhoud, e-mailadressen, wachtwoorden, tokens 
 - objectaantallen en bytegrootten.
 
 De daadwerkelijke SHA-256 van Storage-bytes wordt tijdens de toekomstige export berekend en hoort in het backupmanifest. Database-Storagemetadata is geen vervanging voor een byte-backup.
+
+## BR1D-uitvoeringsgrenzen
+
+De BR1D-scripts zijn **voorbereide lokale tooling**, geen backupdienst. Zij
+openen geen Supabase-, Vercel-, Storage- of providernetwerkverbinding. Een
+latere operator moet bronacquisitie en herstel afzonderlijk autoriseren volgens
+[br1d-backup-restore-execution.md](./br1d-backup-restore-execution.md).
+
+Voor iedere write in een recoveryomgeving vereist de guard tegelijk een
+afwijkend project-ID, `ENVIRONMENT_TYPE=recovery` en de expliciete bevestiging.
+Productie en staging worden hard geweigerd. De provider-kill-switch vereist
+`AI_MODE=mock` en afwezigheid van OpenAI-, Resend-, Stripe-, n8n-, Google- en
+Microsoft-credentials. De scripts printen nooit artifactinhoud of
+credentialwaarden.
 
 ## Vereiste runtimeproeven na herstel
 

@@ -35,6 +35,11 @@ Alleen deze rollen mogen backup-artifacts ontsleutelen. Geen medewerker, klant o
 
 Het machineleesbare contract staat in [backup-manifest.schema.json](./backup-manifest.schema.json). Bewaar echte manifests uitsluitend versleuteld buiten deze repository.
 
+De uitvoerbare, maar volledig lokale voorbereiding staat in
+[br1d-backup-restore-execution.md](./br1d-backup-restore-execution.md). Deze
+kit vervangt geen echte productiebackup of herstelproef: **BR1 TOOLING:
+PREPARED; REAL PRODUCTION BACKUP: NOT CREATED; REAL RESTORE: NOT RUN.**
+
 ## Toekomstige databasebackup
 
 1. **[CEO APPROVAL]** Bevestig de bron als productie, leg UTC-tijd, operator, release/commit en migratieledger vast.
