@@ -240,11 +240,12 @@ test("F1B keeps RC1 live safeguards server-side and leaves mock mode unrestricte
   assert.match(gateway, /rc1ProviderCallAttempted: true/);
   assert.match(gateway, /reserveRc1ProviderCall[\s\S]*?beforeProvider/);
 
-  assert.match(env, /OPENAI_QUOTE_MODEL=gpt-5\.6-luna/);
-  assert.match(env, /"gpt-5\.6-luna":\{"inputUsdPerMillionTokens":1,"outputUsdPerMillionTokens":6\}/);
-  assert.match(env, /AI_RC1_MAX_OUTPUT_TOKENS=800/);
-  assert.match(env, /AI_RC1_MAX_CALLS=5/);
-  assert.match(env, /AI_RC1_SPIKE_BUDGET_CENTS=25/);
+  assert.match(env, /^AI_MODE=mock$/m);
+  assert.doesNotMatch(env, /^AI_MODE=live$/m);
+  assert.match(env, /AI_MODE=live requires a separate approved OpenAI provider release/);
+  assert.match(env, /# OPENAI_API_KEY=/);
+  assert.match(env, /# RESEND_API_KEY=/);
+  assert.match(env, /calendar providers are disabled/);
 });
 
 test("migration keeps quote storage atomic and catalog prices authoritative", async () => {
@@ -1005,6 +1006,7 @@ test("OR1 accepts mock mode without live OpenAI configuration and rejects invali
     AI_MODE: "mock",
   });
   assert.equal(mock.aiMode, "mock");
+  assert.equal(readRuntimeConfig({ NEXT_PUBLIC_SUPABASE_URL: "https://example.supabase.co", NEXT_PUBLIC_SUPABASE_ANON_KEY: "key" }).aiMode, "mock");
   assert.throws(() => readRuntimeConfig({ NEXT_PUBLIC_SUPABASE_URL: "https://example.supabase.co", NEXT_PUBLIC_SUPABASE_ANON_KEY: "key", AI_MODE: "invalid" }), RuntimeConfigError);
   assert.throws(() => readRuntimeConfig({ NEXT_PUBLIC_SUPABASE_URL: "https://example.supabase.co", NEXT_PUBLIC_SUPABASE_ANON_KEY: "key", AI_MODE: "live" }), RuntimeConfigError);
 });

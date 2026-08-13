@@ -33,8 +33,6 @@ NEXT_PUBLIC_SUPABASE_URL=<production-project-url>
 NEXT_PUBLIC_SUPABASE_ANON_KEY=<production-anon-key>
 SUPABASE_SECRET_KEY=<production-server-secret>
 AI_MODE=mock
-AI_PROVIDER=openai
-AI_MODEL_QUOTE=<configured-default-model>
 ```
 
 `SUPABASE_SERVICE_ROLE_KEY` may be used instead of `SUPABASE_SECRET_KEY` only if the deployment uses that naming convention. Set one server-only admin credential, not a public credential.
@@ -50,7 +48,7 @@ STRIPE_WEBHOOK_SECRET
 STRIPE_PRICE_STARTER
 ```
 
-If a later release enables real AI, mail or Stripe, use a separate reviewed change and add only its required configuration.
+If a later release enables real AI, add provider, model and cost configuration only through a separate approved OpenAI provider release; `AI_MODE=live` alone is never sufficient authorization. Resend, Stripe and calendar providers each require their own reviewed provider/OAuth release gate.
 
 ## Supabase production baseline
 

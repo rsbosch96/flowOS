@@ -5,7 +5,7 @@ SaaS-basis voor Nederlandse installatiebedrijven: organisaties, rollen, Supabase
 ## Lokaal starten
 
 1. Installeer Node.js 20.9 of hoger en voer `npm install` uit.
-2. Kopieer `.env.example` naar `.env.local` en vul uitsluitend de browser-safe Supabase URL/anon key in om de app te starten. Server-secrets blijven leeg totdat de bijbehorende features worden toegevoegd.
+2. Kopieer `.env.example` naar `.env.local` en vul uitsluitend de browser-safe Supabase URL/anon key in om de app te starten. `AI_MODE=mock` is de veilige pilotdefault; server-secrets en providerinstellingen blijven leeg totdat de bijbehorende releasegate is goedgekeurd.
 3. Maak in Supabase een private Storage-bucket `company-documents`.
 4. Plak eerst [outputs/database-schema.sql](./outputs/database-schema.sql) in de Supabase SQL editor of registreer het als migratie `001_initial.sql`; voer daarna `supabase/migrations/002_bootstrap_company.sql` uit.
 5. Configureer in Supabase Auth de redirect URL `http://localhost:3000/auth/callback`.
@@ -17,7 +17,8 @@ SaaS-basis voor Nederlandse installatiebedrijven: organisaties, rollen, Supabase
 - Gebruik de service-role key nooit in clientcode, Edge Middleware of logs.
 - De database is beveiligd met RLS. De dashboardqueries gebruiken de sessie van de ingelogde gebruiker; een `companySlug` geeft dus geen extra toegang.
 - De onboarding-RPC maakt organisatie en eigenaar in één transactie aan.
-- Zet voor kosteloos lokaal testen `AI_MODE=mock` in `.env.local`. Deze modus genereert vaste testconcepten en is geblokkeerd in productie.
+- `AI_MODE=mock` is de veilige standaard voor lokale ontwikkeling en de huidige pilot. Deze modus genereert vaste testconcepten en doet geen externe AI-call. `AI_MODE=live` is uitsluitend toegestaan na een afzonderlijke OpenAI-providerrelease; de instelling alleen is geen autorisatie.
+- Resend, Stripe, Google Calendar en Microsoft Calendar blijven uit tot hun eigen provider-/OAuth-releasegate is goedgekeurd.
 
 ## Volgende bouwblokken
 
