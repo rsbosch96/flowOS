@@ -1,5 +1,18 @@
 import type { NextConfig } from "next";
 
-const nextConfig: NextConfig = { serverExternalPackages: ["@react-pdf/renderer"] };
+const securityHeaders = [
+  { key: "X-Content-Type-Options", value: "nosniff" },
+  { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+  { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(), payment=(), usb=()" },
+  { key: "Content-Security-Policy", value: "frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'" },
+  { key: "X-Frame-Options", value: "DENY" },
+];
+
+const nextConfig: NextConfig = {
+  serverExternalPackages: ["@react-pdf/renderer"],
+  async headers() {
+    return [{ source: "/(.*)", headers: securityHeaders }];
+  },
+};
 
 export default nextConfig;

@@ -69,6 +69,18 @@ test("backup tooling is read-only and its manifest contract excludes secrets", a
   assert.match(storageInventory, /'path', so\.name/);
 });
 
+test("SEC-003 applies a minimal global security-header baseline without enabling providers", async () => {
+  const config = await file("next.config.ts");
+
+  assert.match(config, /source: "\/\(\.\*\)"/);
+  assert.match(config, /X-Content-Type-Options", value: "nosniff"/);
+  assert.match(config, /Referrer-Policy", value: "strict-origin-when-cross-origin"/);
+  assert.match(config, /Permissions-Policy", value: "camera=\(\), microphone=\(\), geolocation=\(\), payment=\(\), usb=\(\)"/);
+  assert.match(config, /Content-Security-Policy", value: "frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'"/);
+  assert.match(config, /X-Frame-Options", value: "DENY"/);
+  assert.doesNotMatch(config, /openai|stripe|resend|google|microsoft/i);
+});
+
 test("backup snapshot comparison reports sections only and never echoes snapshot values", async () => {
   const directory = await mkdtemp(join(tmpdir(), "flowos-backup-tooling-"));
   const sourcePath = join(directory, "source.json");
