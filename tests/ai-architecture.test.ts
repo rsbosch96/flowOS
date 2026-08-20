@@ -1291,6 +1291,7 @@ test("PL1 keeps Planning additive, tenant-bound and provider-neutral", async () 
   const route = await file("src/app/api/v1/companies/[companyId]/planning-events/route.ts");
   const page = await file("src/app/(app)/app/[companySlug]/planning/page.tsx");
   const quotePage = await file("src/app/(app)/app/[companySlug]/quotes/[quoteId]/page.tsx");
+  const planningContribution = await file("src/features/planning/module-contribution.tsx");
   const providerBoundary = await file("docs/architecture/planning-v1.md");
   const runtimeProof = await file("tests/planning-tenant-isolation.sql");
 
@@ -1315,7 +1316,9 @@ test("PL1 keeps Planning additive, tenant-bound and provider-neutral", async () 
   assert.match(route, /customerId = quote\.customer_id/);
   assert.doesNotMatch(route, /createAdminClient|SUPABASE_SECRET_KEY|SUPABASE_SERVICE_ROLE_KEY/);
   assert.match(page, /\.from\("planning_events"\)[\s\S]*?\.eq\("company_id", company\.id\)/);
-  assert.match(quotePage, /quote\.status === "accepted"[\s\S]*?AddQuoteToPlanningButton/);
+  assert.match(quotePage, /quote\.status === "accepted"[\s\S]*?renderQuoteDetailModuleActions/);
+  assert.match(planningContribution, /quoteStatus !== "accepted"/);
+  assert.match(planningContribution, /AddQuoteToPlanningButton/);
   assert.match(providerBoundary, /geen provider-SDK, OAuth, credentials/i);
   assert.doesNotMatch(route, /google|microsoft|oauth|calendar/i);
   assert.match(runtimeProof, /PL1_RUNTIME_A_CAN_READ_B_EVENT/);
@@ -1332,6 +1335,10 @@ test("ENT1 keeps Core implicit and narrows Planning at navigation, API and RLS b
   const page = await file("src/app/(app)/app/[companySlug]/planning/page.tsx");
   const route = await file("src/app/api/v1/companies/[companyId]/planning-events/route.ts");
   const quotePage = await file("src/app/(app)/app/[companySlug]/quotes/[quoteId]/page.tsx");
+  const moduleServer = await file("src/modules/server.tsx");
+  const registry = await file("src/modules/registry.ts");
+  const planningContribution = await file("src/features/planning/module-contribution.tsx");
+  const contributionBoundary = await file("src/modules/components/module-contribution-boundary.tsx");
   const runtimeProof = await file("tests/entitlements-postgrest-runtime.mjs");
 
   assert.match(migration, /create table public\.module_catalog/);
@@ -1355,15 +1362,54 @@ test("ENT1 keeps Core implicit and narrows Planning at navigation, API and RLS b
   assert.match(helper, /import "server-only"/);
   assert.match(helper, /rpc\("has_company_module"/);
   assert.match(helper, /return !error && data === true/);
-  assert.match(layout, /planningEnabled && <Nav href=\{`\$\{root\}\/planning`\}/);
+  assert.match(layout, /getEnabledModuleContributions/);
+  assert.match(layout, /getModuleNavigationItems/);
   assert.match(page, /hasCompanyModule\(supabase, company\.id, planningModule\).*notFound/);
   assert.match(route, /PLANNING_MODULE_DISABLED/);
-  assert.match(quotePage, /planningEnabled && <AddQuoteToPlanningButton/);
+  assert.match(quotePage, /renderQuoteDetailModuleActions/);
+  assert.match(registry, /planningModuleContribution/);
+  assert.match(planningContribution, /AddQuoteToPlanningButton/);
+  assert.match(moduleServer, /hasCompanyModule/);
+  assert.match(contributionBoundary, /module_contribution_render_failed/);
+  assert.doesNotMatch(layout, /features\/planning|planningModule|hasCompanyModule/);
+  assert.doesNotMatch(quotePage, /features\/planning|planningModule|hasCompanyModule|AddQuoteToPlanningButton/);
   assert.match(runtimeProof, /local PostgREST\/Data API/);
   assert.match(runtimeProof, /revokedMemberSelect: "denied"/);
   assert.match(runtimeProof, /coreWithoutPlanning: "accepted_without_planning_event"/);
   assert.match(runtimeProof, /\["GET", "POST", "PATCH"\]/);
   assert.match(runtimeProof, /module catalog write access/);
+});
+
+test("MOD2 Phase 0 keeps Core extension slots generic and Planning module-owned", async () => {
+  const layout = await file("src/app/(app)/app/[companySlug]/layout.tsx");
+  const quotePage = await file("src/app/(app)/app/[companySlug]/quotes/[quoteId]/page.tsx");
+  const contracts = await file("src/modules/contracts.ts");
+  const registry = await file("src/modules/registry.ts");
+  const moduleServer = await file("src/modules/server.tsx");
+  const planningContribution = await file("src/features/planning/module-contribution.tsx");
+  const boundary = await file("src/modules/components/module-contribution-boundary.tsx");
+
+  assert.match(contracts, /ModuleContribution/);
+  assert.match(contracts, /navigation\?/);
+  assert.match(contracts, /quoteDetailActions\?/);
+  assert.match(registry, /validateModuleContributions/);
+  assert.match(registry, /Duplicate module contribution registration/);
+  assert.match(moduleServer, /getEnabledModuleContributions/);
+  assert.match(moduleServer, /getModuleNavigationItems/);
+  assert.match(moduleServer, /renderQuoteDetailModuleActions/);
+  assert.match(moduleServer, /hasCompanyModule/);
+  assert.match(planningContribution, /moduleKey: planningModule/);
+  assert.match(planningContribution, /href: `\$\{root\}\/planning`/);
+  assert.match(planningContribution, /AddQuoteToPlanningButton/);
+  assert.match(planningContribution, /quoteStatus !== "accepted"/);
+  assert.match(boundary, /getDerivedStateFromError/);
+  assert.match(boundary, /module_contribution_render_failed/);
+  assert.match(layout, /getModuleNavigationItems/);
+  assert.match(quotePage, /renderQuoteDetailModuleActions/);
+
+  for (const source of [layout, quotePage]) {
+    assert.doesNotMatch(source, /@\/features\/planning|planningModule|hasCompanyModule|AddQuoteToPlanningButton/);
+  }
 });
 
 test("MON1 classifies safe Supabase API, timeout and unexpected health diagnostics", async () => {
