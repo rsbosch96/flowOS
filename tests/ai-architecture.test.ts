@@ -1360,23 +1360,24 @@ test("ENT1 keeps Core implicit and narrows Planning at navigation, API and RLS b
 
   assert.match(modules, /"core", "planning"/);
   assert.match(helper, /import "server-only"/);
-  assert.match(helper, /rpc\("has_company_module"/);
-  assert.match(helper, /return !error && data === true/);
+  assert.match(helper, /rpc\("resolve_company_module_access"/);
+  assert.match(helper, /MODULE_ACCESS_FORBIDDEN/);
+  assert.match(helper, /=== "MODULE_AVAILABLE"/);
   assert.match(layout, /getEnabledModuleContributions/);
   assert.match(layout, /getModuleNavigationItems/);
-  assert.match(page, /hasCompanyModule\(supabase, company\.id, planningModule\).*notFound/);
+  assert.match(page, /resolveCompanyModuleAccess\(supabase, company\.id, planningModule\).*MODULE_AVAILABLE.*notFound/);
   assert.match(route, /PLANNING_MODULE_DISABLED/);
   assert.match(quotePage, /renderQuoteDetailModuleActions/);
   assert.match(registry, /planningModuleContribution/);
   assert.match(planningContribution, /AddQuoteToPlanningButton/);
-  assert.match(moduleServer, /hasCompanyModule/);
+  assert.match(moduleServer, /resolveCompanyModuleAccess/);
   assert.match(contributionBoundary, /module_contribution_render_failed/);
   assert.doesNotMatch(layout, /features\/planning|planningModule|hasCompanyModule/);
   assert.doesNotMatch(quotePage, /features\/planning|planningModule|hasCompanyModule|AddQuoteToPlanningButton/);
   assert.match(runtimeProof, /local PostgREST\/Data API/);
   assert.match(runtimeProof, /revokedMemberSelect: "denied"/);
   assert.match(runtimeProof, /coreWithoutPlanning: "accepted_without_planning_event"/);
-  assert.match(runtimeProof, /\["GET", "POST", "PATCH"\]/);
+  assert.match(runtimeProof, /\["GET", "POST", "PATCH", "DELETE"\]/);
   assert.match(runtimeProof, /module catalog write access/);
 });
 
@@ -1397,7 +1398,7 @@ test("MOD2 Phase 0 keeps Core extension slots generic and Planning module-owned"
   assert.match(moduleServer, /getEnabledModuleContributions/);
   assert.match(moduleServer, /getModuleNavigationItems/);
   assert.match(moduleServer, /renderQuoteDetailModuleActions/);
-  assert.match(moduleServer, /hasCompanyModule/);
+  assert.match(moduleServer, /resolveCompanyModuleAccess/);
   assert.match(planningContribution, /moduleKey: planningModule/);
   assert.match(planningContribution, /href: `\$\{root\}\/planning`/);
   assert.match(planningContribution, /AddQuoteToPlanningButton/);
@@ -1410,6 +1411,64 @@ test("MOD2 Phase 0 keeps Core extension slots generic and Planning module-owned"
   for (const source of [layout, quotePage]) {
     assert.doesNotMatch(source, /@\/features\/planning|planningModule|hasCompanyModule|AddQuoteToPlanningButton/);
   }
+});
+
+test("MOD2 Phase 1 makes the registry, dependency resolver and lifecycle control plane runtime-authoritative", async () => {
+  const migration = await file("supabase/migrations/20260820162914_module_runtime_v2.sql");
+  const helper = await file("src/lib/entitlements/server.ts");
+  const controlPlane = await file("src/lib/entitlements/control-plane.ts");
+  const planningPage = await file("src/app/(app)/app/[companySlug]/planning/page.tsx");
+  const planningRoute = await file("src/app/api/v1/companies/[companyId]/planning-events/route.ts");
+  const moduleServer = await file("src/modules/server.tsx");
+  const runtimeProof = await file("tests/entitlements-postgrest-runtime.mjs");
+
+  assert.match(migration, /add column if not exists display_name text[\s\S]*?description text[\s\S]*?release_state text[\s\S]*?updated_at timestamptz/);
+  assert.match(migration, /release_state = 'released',[\s\S]*?where module_key = 'planning'/);
+  assert.match(migration, /release_state in \('planned', 'released', 'retired'\)/);
+  assert.match(migration, /create table public\.module_dependencies[\s\S]*?primary key \(module_key, depends_on_module_key\)/);
+  assert.match(migration, /module_dependencies_not_self_check/);
+  assert.match(migration, /MODULE_DEPENDENCY_SELF_REFERENCE/);
+  assert.match(migration, /module_dependencies_acyclic/);
+  assert.match(migration, /MODULE_DEPENDENCY_CYCLE/);
+  assert.match(migration, /cardinality\(path\.path\) < 32/);
+  assert.match(migration, /lock table public\.module_dependencies in share row exclusive mode/);
+  assert.match(migration, /pg_advisory_xact_lock\(hashtextextended\(target_company_id::text, 0\)\)/);
+  assert.match(migration, /resolve_company_module_access\(target_company_id uuid, target_module_key text\)/);
+  for (const code of ["MODULE_NOT_FOUND", "MODULE_NOT_RELEASED", "MODULE_RETIRED", "MODULE_NOT_ENTITLED", "MODULE_DEPENDENCY_MISSING", "MODULE_ACCESS_FORBIDDEN", "MODULE_AVAILABLE"]) {
+    assert.match(migration, new RegExp(code));
+  }
+  assert.match(migration, /security definer[\s\S]*?set search_path = public, pg_temp/);
+  assert.match(migration, /revoke all on function public\.resolve_company_module_access[\s\S]*?grant execute on function public\.resolve_company_module_access\(uuid, text\) to authenticated/);
+  assert.match(migration, /grant execute on function public\.activate_company_module\(uuid, text, text, uuid\) to service_role/);
+  assert.match(migration, /grant execute on function public\.deactivate_company_module\(uuid, text, text, uuid\) to service_role/);
+  assert.doesNotMatch(migration, /grant execute on function public\.activate_company_module\([^)]*\) to authenticated/);
+  assert.doesNotMatch(migration, /grant execute on function public\.deactivate_company_module\([^)]*\) to authenticated/);
+  assert.match(migration, /MODULE_REQUIRED_BY_ENABLED_DEPENDENT/);
+  assert.match(migration, /module_entitlement\.granted/);
+  assert.match(migration, /module_entitlement\.revoked/);
+  assert.match(migration, /resolve_company_module_access\(company_id, 'planning'\) = 'MODULE_AVAILABLE'/);
+  assert.doesNotMatch(migration, /openai|resend|stripe|google|microsoft|price|subscription/i);
+
+  assert.match(helper, /moduleAccessCodes/);
+  assert.match(helper, /resolve_company_module_access/);
+  assert.match(helper, /MODULE_ACCESS_FORBIDDEN/);
+  assert.match(controlPlane, /import "server-only"/);
+  assert.match(controlPlane, /createAdminClient/);
+  assert.match(controlPlane, /activate_company_module/);
+  assert.match(controlPlane, /deactivate_company_module/);
+  assert.doesNotMatch(controlPlane, /route\.ts|NextResponse|client component/i);
+  assert.match(moduleServer, /resolveCompanyModuleAccess[\s\S]*?MODULE_AVAILABLE/);
+  assert.match(planningPage, /resolveCompanyModuleAccess[\s\S]*?MODULE_AVAILABLE/);
+  assert.match(planningRoute, /resolveCompanyModuleAccess[\s\S]*?MODULE_AVAILABLE/);
+
+  for (const marker of [
+    "MODULE_NOT_RELEASED", "MODULE_RETIRED", "MODULE_NOT_FOUND", "MODULE_NOT_ENTITLED",
+    "MODULE_DEPENDENCY_MISSING", "MODULE_DEPENDENCY_CYCLE", "MODULE_DEPENDENCY_SELF_REFERENCE", "MODULE_DEPENDENCY_GRAPH_TOO_DEEP",
+    "activate_company_module", "deactivate_company_module", "MODULE_REQUIRED_BY_ENABLED_DEPENDENT",
+    "clientActivationDenied", "MODULE_ACCESS_FORBIDDEN",
+  ]) assert.match(runtimeProof, new RegExp(marker));
+  assert.match(runtimeProof, /directDataApi/);
+  assert.match(runtimeProof, /coreWithoutPlanning/);
 });
 
 test("MON1 classifies safe Supabase API, timeout and unexpected health diagnostics", async () => {

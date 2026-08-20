@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import { Card } from "@/components/ui/card";
 import { PlanningManager, type PlanningEvent } from "@/features/planning/components/planning-manager";
 import { planningModule } from "@/lib/entitlements/modules";
-import { hasCompanyModule } from "@/lib/entitlements/server";
+import { resolveCompanyModuleAccess } from "@/lib/entitlements/server";
 import { createClient } from "@/lib/supabase/server";
 
 type Row = Omit<PlanningEvent, "customer_name" | "assignee_name">;
@@ -17,7 +17,7 @@ export default async function PlanningPage({ params }: { params: Promise<{ compa
   if (!user) notFound();
   const { data: membership } = await supabase.from("company_memberships").select("role").eq("company_id", company.id).eq("user_id", user.id).maybeSingle();
   if (!membership) notFound();
-  if (!await hasCompanyModule(supabase, company.id, planningModule)) notFound();
+  if (await resolveCompanyModuleAccess(supabase, company.id, planningModule) !== "MODULE_AVAILABLE") notFound();
 
   const [{ data: rows }, { data: customers }, { data: memberships }] = await Promise.all([
     supabase.from("planning_events").select("id,title,description,event_type,starts_at,ends_at,all_day,status,location,assigned_user_id,customer_id,source_type").eq("company_id", company.id).order("starts_at", { ascending: true }).limit(100),

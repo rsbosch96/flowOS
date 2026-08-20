@@ -19,6 +19,12 @@ const CUSTOMER_B = "bbbbbbbb-bbb1-4bbb-8bbb-bbbbbbbbbbbb";
 const QUOTE_A = "aaaaaaaa-aaa2-4aaa-8aaa-aaaaaaaaaaaa";
 const QUOTE_B = "bbbbbbbb-bbb2-4bbb-8bbb-bbbbbbbbbbbb";
 const CORE_QUOTE_B = "bbbbbbbb-bbb3-4bbb-8bbb-bbbbbbbbbbbb";
+const DEPENDENCY_A = "runtime_dependency_a";
+const DEPENDENCY_B = "runtime_dependency_b";
+const DEPENDENCY_C = "runtime_dependency_c";
+const PLANNED_MODULE = "runtime_planned";
+const RETIRED_MODULE = "runtime_retired";
+const DEPTH_MODULES = Array.from({ length: 33 }, (_, index) => `runtime_depth_${String(index).padStart(2, "0")}`);
 
 function run(command, args, input, shell = false) {
   return execFileSync(command, args, {
@@ -128,6 +134,94 @@ sql(`
 const environment = parseEnv(runNpx(["supabase", "status", "--output", "env"]));
 assert.ok(environment.API_URL && environment.ANON_KEY && environment.JWT_SECRET, "Local Supabase API configuration is incomplete");
 
+// MOD2 Phase 1 uses isolated local-only catalog rows. Production catalog data
+// remains Planning-only; the graph below proves transitive resolution and the
+// lifecycle guard without introducing a customer-facing module.
+sql(`
+  insert into public.module_catalog (module_key, display_name, description, release_state) values
+    ('${DEPENDENCY_A}', 'Runtime dependency A', 'Isolated local runtime proof.', 'released'),
+    ('${DEPENDENCY_B}', 'Runtime dependency B', 'Isolated local runtime proof.', 'released'),
+    ('${DEPENDENCY_C}', 'Runtime dependency C', 'Isolated local runtime proof.', 'released'),
+    ('${PLANNED_MODULE}', 'Runtime planned', 'Isolated local runtime proof.', 'planned'),
+    ('${RETIRED_MODULE}', 'Runtime retired', 'Isolated local runtime proof.', 'retired');
+  insert into public.module_dependencies (module_key, depends_on_module_key) values
+    ('${DEPENDENCY_A}', '${DEPENDENCY_B}'),
+    ('${DEPENDENCY_B}', '${DEPENDENCY_C}');
+  insert into public.company_module_entitlements (company_id, module_key, source) values
+    ('${COMPANY_A}', '${PLANNED_MODULE}', 'runtime_test'),
+    ('${COMPANY_A}', '${RETIRED_MODULE}', 'runtime_test');
+`);
+
+const access = async (userId, companyId, moduleKey) => dataApi(userId, "/rpc/resolve_company_module_access", {
+  method: "POST",
+  body: JSON.stringify({ target_company_id: companyId, target_module_key: moduleKey }),
+});
+
+assert.equal((await access(USER_A, COMPANY_A, "core")).body, "MODULE_AVAILABLE", "Core must remain implicit");
+assert.equal((await access(USER_A, COMPANY_A, "planning")).body, "MODULE_AVAILABLE", "Released Planning entitlement should allow access");
+assert.equal((await access(USER_A, COMPANY_B, "planning")).body, "MODULE_ACCESS_FORBIDDEN", "Tenant A probed tenant B module access");
+assert.equal((await access(USER_A, COMPANY_A, PLANNED_MODULE)).body, "MODULE_NOT_RELEASED", "Planned module bypassed its release gate");
+assert.equal((await access(USER_A, COMPANY_A, RETIRED_MODULE)).body, "MODULE_RETIRED", "Retired module bypassed its release gate");
+assert.equal((await access(USER_A, COMPANY_A, "missing_runtime_module")).body, "MODULE_NOT_FOUND", "Unknown module did not fail closed");
+assert.equal((await access(USER_A, COMPANY_A, DEPENDENCY_A)).body, "MODULE_NOT_ENTITLED", "Unentitled released module did not fail closed");
+
+const clientActivationDenied = await dataApi(USER_A, "/rpc/activate_company_module", {
+  method: "POST",
+  body: JSON.stringify({ target_company_id: COMPANY_A, target_module_key: DEPENDENCY_C, activation_source: "runtime_test", actor_user_id: USER_A }),
+});
+assert.ok(clientActivationDenied.status >= 400, "Authenticated Data API caller activated a module");
+
+assert.throws(
+  () => sql(`select public.activate_company_module('${COMPANY_A}', '${DEPENDENCY_A}', 'runtime_test', '${USER_A}');`),
+  /MODULE_DEPENDENCY_MISSING/,
+  "Activation bypassed a missing transitive dependency",
+);
+assert.equal(sql(`select public.activate_company_module('${COMPANY_A}', '${DEPENDENCY_C}', 'runtime_test', '${USER_A}');`).trim(), "t");
+assert.equal(sql(`select public.activate_company_module('${COMPANY_A}', '${DEPENDENCY_B}', 'runtime_test', '${USER_A}');`).trim(), "t");
+assert.equal(sql(`select public.activate_company_module('${COMPANY_A}', '${DEPENDENCY_A}', 'runtime_test', '${USER_A}');`).trim(), "t");
+assert.equal(sql(`select public.activate_company_module('${COMPANY_A}', '${DEPENDENCY_A}', 'runtime_test', '${USER_A}');`).trim(), "f", "Duplicate activation was not idempotent");
+assert.equal((await access(USER_A, COMPANY_A, DEPENDENCY_A)).body, "MODULE_AVAILABLE", "Satisfied dependency chain did not allow access");
+assert.throws(
+  () => sql(`select public.deactivate_company_module('${COMPANY_A}', '${DEPENDENCY_C}', 'runtime_test', '${USER_A}');`),
+  /MODULE_REQUIRED_BY_ENABLED_DEPENDENT/,
+  "Deactivation silently broke an enabled dependent module",
+);
+assert.equal(sql(`select public.deactivate_company_module('${COMPANY_A}', '${DEPENDENCY_A}', 'runtime_test', '${USER_A}');`).trim(), "t");
+assert.equal(sql(`select public.deactivate_company_module('${COMPANY_A}', '${DEPENDENCY_A}', 'runtime_test', '${USER_A}');`).trim(), "f", "Duplicate deactivation was not idempotent");
+assert.equal(sql(`select public.deactivate_company_module('${COMPANY_A}', '${DEPENDENCY_B}', 'runtime_test', '${USER_A}');`).trim(), "t");
+assert.equal(sql(`select public.deactivate_company_module('${COMPANY_A}', '${DEPENDENCY_C}', 'runtime_test', '${USER_A}');`).trim(), "t");
+assert.equal(sql(`select public.deactivate_company_module('${COMPANY_A}', '${DEPENDENCY_C}', 'runtime_test', '${USER_A}');`).trim(), "f", "Duplicate dependency deactivation was not idempotent");
+
+// A deliberately inconsistent local row set proves the resolver still denies
+// both a direct and a transitive missing dependency rather than allowing it.
+sql(`
+  update public.company_module_entitlements set is_enabled = true, revoked_at = null where company_id = '${COMPANY_A}' and module_key in ('${DEPENDENCY_A}', '${DEPENDENCY_B}');
+  update public.company_module_entitlements set is_enabled = false, revoked_at = now() where company_id = '${COMPANY_A}' and module_key = '${DEPENDENCY_C}';
+`);
+assert.equal((await access(USER_A, COMPANY_A, DEPENDENCY_B)).body, "MODULE_DEPENDENCY_MISSING", "Direct missing dependency did not deny access");
+assert.equal((await access(USER_A, COMPANY_A, DEPENDENCY_A)).body, "MODULE_DEPENDENCY_MISSING", "Transitive missing dependency did not deny access");
+assert.throws(
+  () => sql(`insert into public.module_dependencies (module_key, depends_on_module_key) values ('${DEPENDENCY_A}', '${DEPENDENCY_A}');`),
+  /MODULE_DEPENDENCY_SELF_REFERENCE/,
+  "Self dependency was accepted",
+);
+assert.throws(
+  () => sql(`insert into public.module_dependencies (module_key, depends_on_module_key) values ('${DEPENDENCY_C}', '${DEPENDENCY_A}');`),
+  /MODULE_DEPENDENCY_CYCLE/,
+  "Circular dependency was accepted",
+);
+sql(`
+  insert into public.module_catalog (module_key, display_name, description, release_state) values
+  ${DEPTH_MODULES.map((moduleKey) => `('${moduleKey}', 'Runtime depth', 'Isolated local runtime proof.', 'released')`).join(",\n  ")};
+  insert into public.module_dependencies (module_key, depends_on_module_key) values
+  ${DEPTH_MODULES.slice(1, -1).map((moduleKey, index) => `('${moduleKey}', '${DEPTH_MODULES[index + 2]}')`).join(",\n  ")};
+`);
+assert.throws(
+  () => sql(`insert into public.module_dependencies (module_key, depends_on_module_key) values ('${DEPTH_MODULES[0]}', '${DEPTH_MODULES[1]}');`),
+  /MODULE_DEPENDENCY_GRAPH_TOO_DEEP/,
+  "Dependency graph depth guard was not deterministic",
+);
+
 const eventPayloadA = {
   company_id: COMPANY_A,
   customer_id: CUSTOMER_A,
@@ -147,6 +241,13 @@ const bCreated = await dataApi(USER_B, "/planning_events", { method: "POST", bod
 assert.equal(bCreated.status, 201, "Temporarily entitled tenant B could not create its own Planning data");
 const eventB = bCreated.body[0];
 
+const aReadsB = await dataApi(USER_A, `/planning_events?company_id=eq.${COMPANY_B}&select=id`);
+const bReadsA = await dataApi(USER_B, `/planning_events?company_id=eq.${COMPANY_A}&select=id`);
+assert.equal(aReadsB.status, 200);
+assert.equal(bReadsA.status, 200);
+assert.deepEqual(aReadsB.body, [], "Tenant A read tenant B Planning data");
+assert.deepEqual(bReadsA.body, [], "Tenant B read tenant A Planning data");
+
 // Revocation denies B at the direct Data API boundary; no data or links are deleted.
 sql(`update public.company_module_entitlements set is_enabled = false, revoked_at = now() where company_id = '${COMPANY_B}' and module_key = 'planning';`);
 const bReadDenied = await dataApi(USER_B, `/planning_events?company_id=eq.${COMPANY_B}&select=id,title`);
@@ -158,9 +259,15 @@ const bUpdateDenied = await dataApi(USER_B, `/planning_events?id=eq.${eventB.id}
 assert.ok(bUpdateDenied.status >= 400 || (Array.isArray(bUpdateDenied.body) && bUpdateDenied.body.length === 0), "Member B updated Planning data after revocation");
 assert.equal(sql(`select title from public.planning_events where id = '${eventB.id}';`).trim(), "ZZZ ENT event B", "Revoked member changed an event");
 
-for (const method of ["GET", "POST", "PATCH"]) {
-  const path = method === "PATCH" ? `/company_module_entitlements?company_id=eq.${COMPANY_B}&module_key=eq.planning` : "/company_module_entitlements";
-  const response = await dataApi(USER_B, path, method === "GET" ? {} : { method, body: JSON.stringify(method === "POST" ? { company_id: COMPANY_B, module_key: "planning", source: "forbidden" } : { is_enabled: true }) });
+for (const method of ["GET", "POST", "PATCH", "DELETE"]) {
+  const path = method === "PATCH" || method === "DELETE"
+    ? `/company_module_entitlements?company_id=eq.${COMPANY_B}&module_key=eq.planning`
+    : "/company_module_entitlements";
+  const response = await dataApi(USER_B, path, method === "GET"
+    ? {}
+    : method === "DELETE"
+      ? { method }
+      : { method, body: JSON.stringify(method === "POST" ? { company_id: COMPANY_B, module_key: "planning", source: "forbidden" } : { is_enabled: true }) });
   assert.ok(response.status >= 400, `Authenticated client retained ${method} access to entitlement records`);
 }
 const catalogWriteDenied = await dataApi(USER_B, "/module_catalog", { method: "POST", body: JSON.stringify({ module_key: "forbidden" }) });
