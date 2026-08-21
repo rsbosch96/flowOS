@@ -14,6 +14,7 @@ import { defaultCurrency, defaultLanguage, defaultLocale, supportedLanguages, su
 import { formatDate, formatMoney } from "../src/i18n/formatters.ts";
 import { getTranslations } from "../src/i18n/get-translations.ts";
 import { getOrganizationContext } from "../src/i18n/organization-context.ts";
+import { mapRegistrationError } from "../src/features/auth/infrastructure/registration-error.ts";
 import { createQuoteEmail } from "../src/features/quotes/infrastructure/quote-email-template.ts";
 import { calculateVatSpecification } from "../src/features/invoices/infrastructure/vat-specification.ts";
 import { readRuntimeConfig, RuntimeConfigError } from "../src/lib/config/runtime.ts";
@@ -206,7 +207,7 @@ test("quote generation exposes typed, safe AI failures to the user interface", a
   assert.match(route, /AI_TIMEOUT/);
   assert.match(route, /AI_VALIDATION_FAILED/);
   assert.match(route, /AI_PROVIDER_UNAVAILABLE/);
-  assert.match(assistant, /errorMessage\(payload\.error\?\.code\)/);
+  assert.match(assistant, /errorMessage\(payload\.error\?\.code, language\)/);
   assert.match(assistant, /aiQuote\.configurationRequired/);
   assert.doesNotMatch(assistant, /payload\.error\?\.message/);
 });
@@ -828,14 +829,35 @@ test("onboarding only receives authenticated users without memberships by defaul
   assert.match(form, /onboarding\.additionalDescription/);
 });
 
-test("Dutch is the fallback language and non-Dutch requests safely use Dutch messages", () => {
+test("Dutch is the fallback language and supported languages use their own bundles", () => {
   assert.equal(getTranslations().language, "nl");
-  assert.equal(getTranslations("en").language, "nl");
-  assert.equal(getTranslations("de").t("navigation.quotes"), getTranslations("nl").t("navigation.quotes"));
+  assert.equal(getTranslations("en").language, "en");
+  assert.notEqual(getTranslations("de").t("navigation.quotes"), getTranslations("nl").t("navigation.quotes"));
+  assert.equal(getTranslations("fr").language, "nl");
+});
+
+test("registration errors are mapped to safe localized messages", () => {
+  assert.equal(mapRegistrationError({ code: "weak_password", message: "password compromised" }), "Dit wachtwoord kan niet worden gebruikt. Kies een ander sterk wachtwoord.");
+  assert.equal(mapRegistrationError({ status: 429, message: "provider details" }, "en"), "Too many attempts. Try again later.");
+  assert.equal(mapRegistrationError({ code: "user_already_exists", message: "email already registered" }, "de"), "Registrierung fehlgeschlagen. Versuche es erneut.");
+  assert.equal(mapRegistrationError({ message: "secret provider stack" }, "es"), "No se pudo completar el registro. Inténtalo de nuevo.");
+  assert.doesNotMatch(mapRegistrationError({ message: "password=secret provider stack" }), /secret|password=/i);
+});
+
+test("language switcher keeps browser preference, account persistence and accessible menu semantics", async () => {
+  const switcher = await file("src/i18n/language-switcher.tsx");
+  const languageRoute = await file("src/app/api/v1/profile/language/route.ts");
+  assert.match(switcher, /localStorage\.setItem\("flowos-language"/);
+  assert.match(switcher, /flowos-language=\$\{next\}/);
+  assert.match(switcher, /aria-haspopup="menu"/);
+  assert.match(switcher, /role="menuitem"/);
+  assert.match(switcher, /Escape/);
+  assert.match(languageRoute, /from\("users"\)\.update\(\{ locale/);
+  assert.match(languageRoute, /eq\("id", user\.id\)/);
 });
 
 test("supported language and locale contracts are explicitly bounded", () => {
-  assert.deepEqual(supportedLanguages, ["nl", "en", "de", "es"]);
+  assert.deepEqual(supportedLanguages, ["nl", "en", "es", "de"]);
   assert.deepEqual(supportedLocales, ["nl-NL", "en-GB", "de-DE", "es-ES"]);
 });
 
@@ -863,7 +885,7 @@ test("quote prompt gets explicit language and locale without AI price fields", a
 
 test("Dutch quote route keeps catalog prices server-side and passes a language contract", async () => {
   const route = await file("src/app/api/v1/companies/[companyId]/quotes/generate/route.ts");
-  assert.match(route, /getOrganizationContext\(companyId\)/);
+  assert.match(route, /getOrganizationContext\(companyId/);
   assert.match(route, /language: organization\.language/);
   assert.match(route, /locale: organization\.locale/);
   assert.match(route, /create_ai_quote_draft/);
@@ -1230,7 +1252,7 @@ test("Pilot Core 1 exposes only allowed invoice actions and Dutch status labels"
   assert.match(statusActions, /\/api\/v1\/companies\/\$\{companyId\}\/invoices\/\$\{invoiceId\}\/status/);
   assert.match(statusRoute, /transition_invoice_status/);
   assert.match(statusRoute, /status: 409/);
-  assert.match(quotePage, /quoteStatusLabel\(quote\.status\)/);
+  assert.match(quotePage, /quoteStatusLabel\(quote\.status, language\)/);
 });
 
 test("Pilot Core 2 derives the start checklist from tenant data without blocking existing users", async () => {
@@ -1278,8 +1300,8 @@ test("Pilot Core 2 distinguishes a temporary public quote rate limit from an una
   const page = await file("src/app/offerte/[token]/page.tsx");
 
   assert.match(page, /const \{ data, error \} = await supabase\.rpc\("get_public_quote", \{ raw_token: token \}\)/);
-  assert.match(page, /if \(error\?\.code === "RATE_LIMITED"\) return <PublicQuoteRateLimited \/>;/);
-  assert.match(page, /Te veel verzoeken\. Probeer het over enkele minuten opnieuw\./);
+  assert.match(page, /if \(error\?\.code === "RATE_LIMITED"\) return <PublicQuoteRateLimited language=\{language\} \/>;/);
+  assert.match(page, /publicQuote\.temporarilyUnavailable/);
   assert.match(page, /if \(!quote\) notFound\(\);/);
   assert.match(page, /CustomerQuoteActions token=\{token\} status=\{quote\.status\}/);
   assert.match(page, /regex\(\/\^\[a-f0-9\]\{64\}\$\/i\)\.safeParse\(token\)\.success\) notFound\(\);/);

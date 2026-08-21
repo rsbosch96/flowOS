@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { Card } from "@/components/ui/card";
 import { CatalogManager } from "@/features/catalog/components/catalog-manager";
 import { createClient } from "@/lib/supabase/server";
+import { getPreferredLanguage } from "@/i18n/server";
 
 export default async function CatalogPage({ params }: { params: Promise<{ companySlug: string }> }) {
   const { companySlug } = await params;
@@ -20,5 +21,5 @@ export default async function CatalogPage({ params }: { params: Promise<{ compan
     return { ...product, imageUrl: data?.signedUrl ?? null };
   }));
 
-  return <Card><CatalogManager companyId={company.id} products={catalogProducts} /></Card>;
+  return <Card><CatalogManager companyId={company.id} products={catalogProducts} language={await getPreferredLanguage()} /></Card>;
 }

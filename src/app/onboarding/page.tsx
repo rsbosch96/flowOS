@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { OnboardingForm } from "@/features/onboarding/components/onboarding-form";
 import { createClient } from "@/lib/supabase/server";
+import { getPreferredLanguage } from "@/i18n/server";
 
 export default async function OnboardingPage() {
   const supabase = await createClient();
@@ -15,7 +16,7 @@ export default async function OnboardingPage() {
 
   return (
     <main className="mx-auto flex min-h-screen max-w-xl items-center px-6">
-      <OnboardingForm hasExistingOrganization={Boolean(membership)} />
+      <OnboardingForm hasExistingOrganization={Boolean(membership)} language={await getPreferredLanguage()} />
     </main>
   );
 }

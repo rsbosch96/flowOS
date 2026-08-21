@@ -4,6 +4,7 @@ import { runAi } from "@/ai/gateway";
 import { AiConfigurationError, AiProviderError, AiRateLimitError, AiRunError, AiSpikeLimitError, AiStorageError, AiTimeoutError, AiValidationError } from "@/ai/errors";
 import { createQuoteSystemPrompt, generateQuoteSchema } from "@/ai/prompts/generate-quote";
 import { getOrganizationContext } from "@/i18n/organization-context";
+import { languageFromLocale } from "@/i18n/config";
 import { logServerEvent, withApiRequest } from "@/lib/observability/server";
 import { enforceRateLimit } from "@/lib/rate-limit/server";
 import { createClient } from "@/lib/supabase/server";
@@ -72,10 +73,11 @@ export async function POST(request: Request, { params }: { params: Promise<{ com
   }
 
   const { companyId } = await params;
-  const organization = getOrganizationContext(companyId);
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: { code: "UNAUTHENTICATED", message: "Log opnieuw in." } }, { status: 401 });
+  const { data: profile } = await supabase.from("users").select("locale").eq("id", user.id).maybeSingle();
+  const organization = getOrganizationContext(companyId, languageFromLocale(profile?.locale));
 
   const { data: membership } = await supabase
     .from("company_memberships")

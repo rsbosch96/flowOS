@@ -6,14 +6,15 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { formatMoney } from "@/i18n/formatters";
 import { getTranslations } from "@/i18n/get-translations";
+import type { SupportedLanguage } from "@/i18n/config";
 
 type CatalogProduct = { id: string; name: string; description: string | null; sku: string | null; unit: string; default_unit_price_cents: number; default_vat_rate: number; is_active: boolean; image_storage_path: string | null; imageUrl: string | null };
 type Draft = { name: string; description: string; sku: string; unit: string; price: string; vatRate: string };
 const emptyDraft: Draft = { name: "", description: "", sku: "", unit: "stuk", price: "", vatRate: "21" };
 const toDraft = (product: CatalogProduct): Draft => ({ name: product.name, description: product.description ?? "", sku: product.sku ?? "", unit: product.unit, price: (product.default_unit_price_cents / 100).toFixed(2).replace(".", ","), vatRate: String(product.default_vat_rate) });
 
-export function CatalogManager({ companyId, products }: { companyId: string; products: CatalogProduct[] }) {
-  const router = useRouter(); const { t } = getTranslations();
+export function CatalogManager({ companyId, products, language = "nl" }: { companyId: string; products: CatalogProduct[]; language?: SupportedLanguage }) {
+  const router = useRouter(); const { t } = getTranslations(language);
   const [showArchived, setShowArchived] = useState(false); const [editingId, setEditingId] = useState<string>(); const [draft, setDraft] = useState<Draft>(emptyDraft); const [message, setMessage] = useState<string>(); const [pending, setPending] = useState(false);
   const visibleProducts = useMemo(() => products.filter((product) => showArchived ? !product.is_active : product.is_active), [products, showArchived]);
   const payload = (value: Draft) => ({ name: value.name, description: value.description || null, sku: value.sku || null, unit: value.unit, priceCents: Math.round(Number(value.price.replace(",", ".")) * 100), vatRate: Number(value.vatRate) });

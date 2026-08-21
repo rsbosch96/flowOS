@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { recordServerAuditEvent } from "@/lib/audit/server";
 import { getRequestId } from "@/lib/observability/server";
 import { enforceRateLimit } from "@/lib/rate-limit/server";
+import { languageFromLocale } from "@/i18n/config";
 
 const idempotencyKeySchema = z.string().uuid();
 
@@ -16,6 +17,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ com
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: { message: "Log opnieuw in." } }, { status: 401 });
+  const { data: profile } = await supabase.from("users").select("locale").eq("id", user.id).maybeSingle();
   const { data: membership } = await supabase.from("company_memberships").select("role").eq("company_id", companyId).eq("user_id", user.id).maybeSingle();
   if (!membership || membership.role === "technician") return NextResponse.json({ error: { message: "Je mag geen herinneringen versturen." } }, { status: 403 });
   const { data: quote } = await supabase.from("quotes").select("id,company_id,title,quote_number,status,customers(name,email),companies(name)").eq("id", quoteId).eq("company_id", companyId).maybeSingle();
@@ -23,7 +25,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ com
   const rateLimitError = await enforceRateLimit({ policy: "quote_reminder", subjectParts: [quote.company_id, quote.id], requestId, route: "/api/v1/companies/:companyId/quotes/:quoteId/remind", companyId: quote.company_id, actorId: user.id });
   if (rateLimitError) return rateLimitError;
 
-  const result = await sendQuoteEmail({ supabase, companyId, quote: quote as unknown as QuoteForDelivery, deliveryType: "reminder", idempotencyKey: idempotencyKey.data, origin: new URL(request.url).origin });
+  const result = await sendQuoteEmail({ supabase, companyId, quote: quote as unknown as QuoteForDelivery, deliveryType: "reminder", idempotencyKey: idempotencyKey.data, origin: new URL(request.url).origin, language: languageFromLocale(profile?.locale) });
   if (!result.ok) return NextResponse.json({ error: { message: result.message } }, { status: result.status });
   if (!result.duplicate) await recordServerAuditEvent({ companyId: quote.company_id, actorUserId: user.id, action: result.auditAction, entityType: "quote", entityId: quote.id, metadata: { delivery_id: result.deliveryId } });
   return NextResponse.json({ ok: true, idempotent: result.duplicate });

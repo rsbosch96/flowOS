@@ -5,6 +5,7 @@ export type QuoteEmailTemplateInput = {
   quoteNumber: string;
   quoteTitle: string;
   publicUrl: string;
+  language?: "nl" | "en" | "es" | "de";
 };
 
 function safeText(value: string) {
@@ -29,14 +30,21 @@ export function createQuoteEmail(input: QuoteEmailTemplateInput) {
   const plainQuoteTitle = plainText(input.quoteTitle);
   const publicUrl = safeText(input.publicUrl);
   const isReminder = input.type === "reminder";
-  const subject = isReminder ? `Herinnering: offerte ${plainQuoteNumber}` : `Offerte ${plainQuoteNumber}: ${plainQuoteTitle}`;
-  const actionText = isReminder ? "Bekijk en reageer op de offerte" : "Bekijk offerte";
-  const introduction = isReminder ? `Graag herinneren wij u aan onze offerte ${quoteTitle}.` : "Uw offerte staat klaar.";
-  const plainIntroduction = isReminder ? `Graag herinneren wij u aan onze offerte ${plainQuoteTitle}.` : "Uw offerte staat klaar.";
+  const language = input.language ?? "nl";
+  const copy = {
+    nl: { subject: isReminder ? `Herinnering: offerte ${plainQuoteNumber}` : `Offerte ${plainQuoteNumber}: ${plainQuoteTitle}`, action: isReminder ? "Bekijk en reageer op de offerte" : "Bekijk offerte", intro: isReminder ? `Graag herinneren wij u aan onze offerte ${quoteTitle}.` : "Uw offerte staat klaar.", greeting: "Beste", closing: "Met vriendelijke groet" },
+    en: { subject: isReminder ? `Reminder: quote ${plainQuoteNumber}` : `Quote ${plainQuoteNumber}: ${plainQuoteTitle}`, action: isReminder ? "View and respond to the quote" : "View quote", intro: isReminder ? `A reminder about our quote ${plainQuoteTitle}.` : "Your quote is ready.", greeting: "Hello", closing: "Kind regards" },
+    es: { subject: isReminder ? `Recordatorio: presupuesto ${plainQuoteNumber}` : `Presupuesto ${plainQuoteNumber}: ${plainQuoteTitle}`, action: isReminder ? "Ver y responder al presupuesto" : "Ver presupuesto", intro: isReminder ? `Le recordamos nuestro presupuesto ${plainQuoteTitle}.` : "Su presupuesto está listo.", greeting: "Hola", closing: "Saludos cordiales" },
+    de: { subject: isReminder ? `Erinnerung: Angebot ${plainQuoteNumber}` : `Angebot ${plainQuoteNumber}: ${plainQuoteTitle}`, action: isReminder ? "Angebot ansehen und beantworten" : "Angebot ansehen", intro: isReminder ? `Eine Erinnerung an unser Angebot ${plainQuoteTitle}.` : "Ihr Angebot ist bereit.", greeting: "Guten Tag", closing: "Mit freundlichen Grüßen" },
+  }[language];
+  const subject = copy.subject;
+  const actionText = copy.action;
+  const introduction = copy.intro;
+  const plainIntroduction = copy.intro.replace(quoteTitle, plainQuoteTitle);
 
   return {
     subject,
-    html: `<p>Beste ${escapeHtml(recipientName)},</p><p>${escapeHtml(introduction)}</p><p><a href="${escapeHtml(publicUrl)}">${escapeHtml(actionText)}</a></p><p>Met vriendelijke groet,<br>${escapeHtml(companyName)}</p>`,
-    text: `Beste ${plainRecipientName},\n\n${plainIntroduction}\n\n${actionText}: ${publicUrl}\n\nMet vriendelijke groet,\n${plainCompanyName}`,
+    html: `<p>${copy.greeting} ${escapeHtml(recipientName)},</p><p>${escapeHtml(introduction)}</p><p><a href="${escapeHtml(publicUrl)}">${escapeHtml(actionText)}</a></p><p>${copy.closing},<br>${escapeHtml(companyName)}</p>`,
+    text: `${copy.greeting} ${plainRecipientName},\n\n${plainIntroduction}\n\n${actionText}: ${publicUrl}\n\n${copy.closing},\n${plainCompanyName}`,
   };
 }

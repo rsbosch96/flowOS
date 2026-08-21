@@ -17,7 +17,7 @@ function safeProviderErrorCode(error: unknown) {
   return `RESEND_${name.replace(/[^A-Z0-9_]/gi, "_").toUpperCase().slice(0, 80)}`;
 }
 
-export async function sendQuoteEmail(input: { supabase: SupabaseClient; companyId: string; quote: QuoteForDelivery; deliveryType: DeliveryType; idempotencyKey: string; origin: string }): Promise<QuoteEmailResult> {
+export async function sendQuoteEmail(input: { supabase: SupabaseClient; companyId: string; quote: QuoteForDelivery; deliveryType: DeliveryType; idempotencyKey: string; origin: string; language?: "nl" | "en" | "es" | "de" }): Promise<QuoteEmailResult> {
   const customer = input.quote.customers;
   if (!customer?.email) return { ok: false, status: 400, message: "Deze klant heeft geen e-mailadres." };
   if (!input.quote.companies?.name) return { ok: false, status: 409, message: "Bedrijfsgegevens ontbreken." };
@@ -62,6 +62,7 @@ export async function sendQuoteEmail(input: { supabase: SupabaseClient; companyI
     quoteNumber: input.quote.quote_number,
     quoteTitle: input.quote.title,
     publicUrl: `${input.origin}/offerte/${rawToken}`,
+    language: input.language,
   });
   const { data: providerData, error: providerError } = await new Resend(process.env.RESEND_API_KEY).emails.send({
     from: process.env.EMAIL_FROM,

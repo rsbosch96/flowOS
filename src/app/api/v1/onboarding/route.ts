@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { languageFromLocale, resolveProductLocale } from "@/i18n/config";
 import { getRequestId } from "@/lib/observability/server";
 import { enforceRateLimit } from "@/lib/rate-limit/server";
 import { createClient } from "@/lib/supabase/server";
 
-const inputSchema = z.object({ companyName: z.string().trim().min(2).max(160), fullName: z.string().trim().min(2).max(120) });
+const inputSchema = z.object({ companyName: z.string().trim().min(2).max(160), fullName: z.string().trim().min(2).max(120), language: z.string().optional() });
 
 export async function POST(request: Request) {
   const requestId = getRequestId(request);
@@ -20,5 +21,7 @@ export async function POST(request: Request) {
     const detail = process.env.NODE_ENV === "development" ? ` Technische melding: ${error.message}` : "";
     return NextResponse.json({ error: { code: "ONBOARDING_FAILED", message: `De organisatie kon niet worden aangemaakt.${detail}` } }, { status: 409 });
   }
-  return NextResponse.json({ slug: data as string }, { status: 201 });
+  const language = languageFromLocale(parsed.data.language);
+  if (language) await supabase.from("users").update({ locale: resolveProductLocale(language), updated_at: new Date().toISOString() }).eq("id", user.id);
+  return NextResponse.json({ slug: data as string, language: language ?? "nl" }, { status: 201 });
 }

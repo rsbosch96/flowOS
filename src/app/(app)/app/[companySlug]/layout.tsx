@@ -14,6 +14,8 @@ import {
 import { getTranslations } from "@/i18n/get-translations";
 import { getEnabledModuleContributions, getModuleNavigationItems } from "@/modules/server";
 import { createClient } from "@/lib/supabase/server";
+import { getPreferredLanguage } from "@/i18n/server";
+import { LanguageSwitcher } from "@/i18n/language-switcher";
 
 export default async function CompanyLayout({
   children,
@@ -24,7 +26,8 @@ export default async function CompanyLayout({
 }) {
   const { companySlug } = await params;
   const root = `/app/${companySlug}`;
-  const { t } = getTranslations();
+  const language = await getPreferredLanguage();
+  const { t } = getTranslations(language);
   const supabase = await createClient();
   const { data: company } = await supabase.from("companies").select("id").eq("slug", companySlug).maybeSingle();
   const moduleNavigation = company
@@ -39,6 +42,7 @@ export default async function CompanyLayout({
             <Building2 className="text-blue-700" /> AI FlowOS
           </Link>
           <div className="flex items-center gap-4">
+            <LanguageSwitcher initialLanguage={language} persistAccount />
             <Link href="/onboarding" className="text-sm text-slate-600 hover:text-slate-950">
               {t("action.addOrganization")}
             </Link>

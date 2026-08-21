@@ -10,12 +10,14 @@ import { CustomerDetailsForm } from "@/features/customers/components/customer-de
 import { QuoteEditor } from "@/features/quotes/components/quote-editor";
 import { quoteStatusLabel } from "@/lib/status-labels";
 import { getEnabledModuleContributions, renderQuoteDetailModuleActions } from "@/modules/server";
+import { getPreferredLanguage } from "@/i18n/server";
 
 type QuoteItem = { position: number; description: string; quantity: number; unit: string; unit_price_cents: number; vat_rate: number; line_total_cents: number };
 type Customer = { id: string; name: string; email: string | null; address: unknown };
 
 export default async function QuoteDetailPage({ params }: { params: Promise<{ companySlug: string; quoteId: string }> }) {
   const { companySlug, quoteId } = await params;
+  const language = await getPreferredLanguage();
   const supabase = await createClient();
   const { data: company } = await supabase.from("companies").select("id").eq("slug", companySlug).maybeSingle();
   if (!company) notFound();
@@ -41,7 +43,7 @@ export default async function QuoteDetailPage({ params }: { params: Promise<{ co
     <Card>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div><p className="text-sm text-slate-600">{quote.quote_number}</p><h1 className="text-2xl font-semibold">{quote.title}</h1><p className="mt-1 text-sm text-slate-600">Voor {customer?.name}</p></div>
-        <div className="text-right"><p className="rounded-full bg-slate-100 px-3 py-1 text-sm">{quoteStatusLabel(quote.status)}</p>{quote.status === "draft" && <div className="mt-3"><ApproveQuoteButton companyId={company.id} quoteId={quote.id} /></div>}{quote.status === "approved" && <div className="mt-3 flex justify-end gap-2"><PublishQuoteButton companyId={company.id} quoteId={quote.id} /><EmailQuoteButton companyId={company.id} quoteId={quote.id} /></div>}{quote.status === "sent" && <div className="mt-3 flex justify-end gap-2"><EmailQuoteButton companyId={company.id} quoteId={quote.id} /><RemindQuoteButton companyId={company.id} quoteId={quote.id} /></div>}{quote.status === "accepted" && <div className="mt-3"><CreateInvoiceButton companyId={company.id} quoteId={quote.id} companySlug={companySlug} />{renderQuoteDetailModuleActions(enabledModuleContributions, { companyId: company.id, companySlug, quoteId: quote.id, quoteNumber: quote.quote_number, quoteStatus: quote.status, quoteTitle: quote.title })}</div>}</div>
+        <div className="text-right"><p className="rounded-full bg-slate-100 px-3 py-1 text-sm">{quoteStatusLabel(quote.status, language)}</p>{quote.status === "draft" && <div className="mt-3"><ApproveQuoteButton companyId={company.id} quoteId={quote.id} /></div>}{quote.status === "approved" && <div className="mt-3 flex justify-end gap-2"><PublishQuoteButton companyId={company.id} quoteId={quote.id} /><EmailQuoteButton companyId={company.id} quoteId={quote.id} /></div>}{quote.status === "sent" && <div className="mt-3 flex justify-end gap-2"><EmailQuoteButton companyId={company.id} quoteId={quote.id} /><RemindQuoteButton companyId={company.id} quoteId={quote.id} /></div>}{quote.status === "accepted" && <div className="mt-3"><CreateInvoiceButton companyId={company.id} quoteId={quote.id} companySlug={companySlug} />{renderQuoteDetailModuleActions(enabledModuleContributions, { companyId: company.id, companySlug, quoteId: quote.id, quoteNumber: quote.quote_number, quoteStatus: quote.status, quoteTitle: quote.title })}</div>}</div>
       </div>
       {quote.customer_comment && <p className="mt-4 rounded-md bg-blue-50 p-3 text-sm text-blue-900"><strong>Klantreactie:</strong> {quote.customer_comment}</p>}
       <pre className="mt-6 whitespace-pre-wrap font-sans text-sm leading-6 text-slate-700">{quote.notes}</pre>

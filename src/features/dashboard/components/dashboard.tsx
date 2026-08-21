@@ -4,9 +4,10 @@ import { Card } from "@/components/ui/card";
 import { getTranslations } from "@/i18n/get-translations";
 import type { DashboardData } from "@/features/dashboard/queries/get-dashboard";
 import { StartChecklist } from "@/features/dashboard/components/start-checklist";
+import type { SupportedLanguage } from "@/i18n/config";
 
-export function Dashboard({ data }: { data: DashboardData }) {
-  const { t } = getTranslations();
+export function Dashboard({ data, language = "nl" }: { data: DashboardData; language?: SupportedLanguage }) {
+  const { t } = getTranslations(language);
   const metrics = [
     { key: "requests", label: t("dashboard.openRequests"), icon: MessageSquare },
     { key: "quotes", label: t("dashboard.createdQuotes"), icon: FileText },

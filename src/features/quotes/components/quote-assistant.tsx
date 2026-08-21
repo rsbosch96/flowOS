@@ -6,6 +6,7 @@ import { Bot } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { getTranslations } from "@/i18n/get-translations";
+import type { SupportedLanguage } from "@/i18n/config";
 
 type QuoteGenerationErrorCode =
   | "AI_CONFIGURATION_REQUIRED"
@@ -18,8 +19,8 @@ type QuoteGenerationErrorCode =
   | "AI_PROVIDER_UNAVAILABLE"
   | "AI_GENERATION_FAILED";
 
-function errorMessage(code: QuoteGenerationErrorCode | undefined) {
-  const { t } = getTranslations();
+function errorMessage(code: QuoteGenerationErrorCode | undefined, language: SupportedLanguage) {
+  const { t } = getTranslations(language);
   const keyByCode = {
     AI_CONFIGURATION_REQUIRED: "aiQuote.configurationRequired",
     AI_SPIKE_LIMIT_REACHED: "aiQuote.rateLimit",
@@ -34,9 +35,9 @@ function errorMessage(code: QuoteGenerationErrorCode | undefined) {
   return t(code ? keyByCode[code] : "aiQuote.genericFailure");
 }
 
-export function QuoteAssistant({ companyId, companySlug }: { companyId: string; companySlug: string }) {
+export function QuoteAssistant({ companyId, companySlug, language = "nl" }: { companyId: string; companySlug: string; language?: SupportedLanguage }) {
   const router = useRouter();
-  const { t } = getTranslations();
+  const { t } = getTranslations(language);
   const [error, setError] = useState<string>();
   const [pending, setPending] = useState(false);
 
@@ -55,7 +56,7 @@ export function QuoteAssistant({ companyId, companySlug }: { companyId: string; 
       });
       const payload = await response.json() as { quoteId?: string; error?: { code?: QuoteGenerationErrorCode; message?: string } };
       if (!response.ok || !payload.quoteId) {
-        setError(errorMessage(payload.error?.code));
+        setError(errorMessage(payload.error?.code, language));
         return;
       }
       router.replace(`/app/${companySlug}/quotes/${payload.quoteId}`);
