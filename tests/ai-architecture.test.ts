@@ -1584,3 +1584,38 @@ test("FS1.2 exposes only narrow, module-gated work-order mutations", async () =>
     assert.match(route, /runFieldService/);
   }
 });
+
+test("FS1.3 keeps execution data append-only, tenant-bound and non-financial", async () => {
+  const migration = await file("supabase/migrations/20260821145520_field_service_execution_data.sql");
+  const server = await file("src/features/field-service/server.ts");
+  const runtime = await file("tests/field-service-execution-data-runtime.mjs");
+  const storageRoute = await file("src/app/api/v1/companies/[companyId]/field-service/work-orders/[workOrderId]/evidence/upload-url/route.ts");
+
+  for (const table of ["materials", "notes", "evidence", "signoffs"]) {
+    assert.match(migration, new RegExp(`create table public\\.field_service_work_order_${table}`));
+    assert.match(migration, new RegExp(`alter table public\\.field_service_work_order_${table} enable row level security`));
+  }
+  assert.match(migration, /source_kind text not null check \(source_kind in \('catalog', 'external'\)\)/);
+  assert.match(migration, /quantity numeric\(12,3\) not null check \(quantity > 0\)/);
+  assert.match(migration, /prices, VAT and financial amounts are intentionally absent/);
+  assert.match(migration, /append_only/);
+  assert.match(migration, /FIELD_SERVICE_CATALOG_PRODUCT_INVALID/);
+  assert.match(migration, /FIELD_SERVICE_DOCUMENT_TENANT_MISMATCH/);
+  assert.match(migration, /FIELD_SERVICE_SIGNOFF_EXISTS/);
+  assert.match(migration, /field_service\.material_added/);
+  assert.match(migration, /field_service\.note_added/);
+  assert.match(migration, /field_service\.evidence_added/);
+  assert.match(migration, /field_service\.signoff_recorded/);
+  assert.doesNotMatch(migration, /grant (insert|update|delete).*field_service_work_order_(materials|notes|evidence|signoffs) to authenticated/i);
+  for (const rpc of ["add_field_service_material", "add_field_service_note", "authorize_field_service_evidence_upload", "record_field_service_evidence", "record_field_service_signoff"]) {
+    assert.match(migration, new RegExp(`grant execute on function public\\.${rpc}[\\s\\S]*to authenticated`));
+  }
+  assert.match(storageRoute, /field-service/);
+  assert.match(storageRoute, /company-documents/);
+  assert.match(storageRoute, /createSignedUploadUrl/);
+  assert.match(server, /FIELD_SERVICE_EXECUTION_STATE_INVALID/);
+  assert.match(runtime, /cross-tenant product/);
+  assert.match(runtime, /Direct Data API/);
+  assert.match(runtime, /storage cleanup/);
+  assert.match(runtime, /financial totals/);
+});
