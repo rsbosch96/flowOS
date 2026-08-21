@@ -1515,3 +1515,38 @@ test("MON1 health route keeps diagnostic data in safe logs and generic public re
   assert.match(health, /status: 503/);
   assert.doesNotMatch(health, /status: "unhealthy"[\s\S]{0,300}category/);
 });
+
+test("FS1.1 work-order foundation is additive, unreleased and local-proof guarded", async () => {
+  const migration = await file("supabase/migrations/20260821115954_field_service_work_order_foundation.sql");
+  const modules = await file("src/lib/entitlements/modules.ts");
+  const runtime = await file("tests/field-service-work-order-runtime.mjs");
+
+  assert.match(modules, /\["core", "planning", "field_service"\]/);
+  assert.match(migration, /insert into public\.module_catalog[\s\S]*?'field_service'[\s\S]*?'planned'/);
+  assert.match(migration, /create table public\.field_service_work_orders/);
+  assert.match(migration, /foreign key \(customer_id, company_id\)[\s\S]*?references public\.customers\(id, company_id\)/);
+  assert.match(migration, /planning_event_id uuid references public\.planning_events\(id\)[\s\S]*?on delete set null/);
+  assert.match(migration, /FIELD_SERVICE_QUOTE_NOT_ACCEPTED/);
+  assert.match(migration, /FIELD_SERVICE_QUOTE_TENANT_MISMATCH/);
+  assert.match(migration, /FIELD_SERVICE_PLANNING_TENANT_MISMATCH/);
+  assert.match(migration, /FIELD_SERVICE_INVALID_TRANSITION/);
+  assert.match(migration, /FIELD_SERVICE_TERMINAL_STATE/);
+  assert.match(migration, /field_service\.created/);
+  assert.match(migration, /field_service\.dispatched/);
+  assert.match(migration, /field_service\.started/);
+  assert.match(migration, /field_service\.completed/);
+  assert.match(migration, /field_service\.cancelled/);
+  assert.match(migration, /revoke all on table public\.field_service_work_orders from public, anon, authenticated, service_role/);
+  assert.match(migration, /grant select on table public\.field_service_work_orders to authenticated/);
+  assert.doesNotMatch(migration, /grant (insert|update|delete).*field_service_work_orders to authenticated/i);
+  assert.match(migration, /grant execute on function public\.create_field_service_work_order[\s\S]*to authenticated/);
+  assert.match(migration, /grant execute on function public\.transition_field_service_work_order[\s\S]*to authenticated/);
+  assert.doesNotMatch(migration, /grant execute on function public\.(create|transition)_field_service_work_order[\s\S]*to service_role/);
+  assert.match(migration, /resolve_company_module_access\(company_id, 'field_service'\)/);
+  assert.match(migration, /set search_path = public, pg_temp/);
+  assert.match(runtime, /runNpx\(\["supabase", "db", "reset", "--local", "--no-seed"\]\)/);
+  assert.doesNotMatch(runtime, /--linked|ivifmemxvgglvnnarubt|lkmzwhbbffppyiiiyswk/);
+  for (const marker of ["Cross-tenant related ID was accepted", "Direct Data API insert remained available", "Terminal work order accepted a further transition", "dispatched -> completed was accepted", "in_progress -> planned was accepted", "Planning revocation affected work-order data"]) {
+    assert.match(runtime, new RegExp(marker));
+  }
+});
