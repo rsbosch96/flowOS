@@ -1550,3 +1550,37 @@ test("FS1.1 work-order foundation is additive, unreleased and local-proof guarde
     assert.match(runtime, new RegExp(marker));
   }
 });
+
+test("FS1.2 exposes only narrow, module-gated work-order mutations", async () => {
+  const migration = await file("supabase/migrations/20260821133443_field_service_work_order_use_cases.sql");
+  const server = await file("src/features/field-service/server.ts");
+  const routes = await Promise.all([
+    "work-orders/route.ts",
+    "work-orders/[workOrderId]/assign/route.ts",
+    "work-orders/[workOrderId]/dispatch/route.ts",
+    "work-orders/[workOrderId]/start/route.ts",
+    "work-orders/[workOrderId]/complete/route.ts",
+    "work-orders/[workOrderId]/cancel/route.ts",
+  ].map((suffix) => file(`src/app/api/v1/companies/[companyId]/field-service/${suffix}`)));
+
+  assert.match(migration, /revoke all on function public\.transition_field_service_work_order/);
+  for (const operation of ["create", "assign", "dispatch", "start", "complete", "cancel"]) {
+    assert.match(migration, new RegExp(`create or replace function public\\.${operation}_field_service_work_order`));
+    assert.match(migration, new RegExp(`${operation}_field_service_work_order[\\s\\S]*?security definer[\\s\\S]*?set search_path = public, pg_temp`));
+  }
+  assert.match(migration, /for update/);
+  assert.match(migration, /FIELD_SERVICE_MODULE_UNAVAILABLE/);
+  assert.match(migration, /FIELD_SERVICE_CUSTOMER_TENANT_MISMATCH/);
+  assert.match(migration, /field_service_work_orders_link_validation/);
+  assert.match(migration, /FIELD_SERVICE_CONCURRENT_CONFLICT/);
+  assert.match(migration, /Exactly one audit record per successful intent/);
+  assert.match(migration, /grant execute on function public\.assign_field_service_work_order[\s\S]*to authenticated/);
+  assert.match(migration, /grant execute on function public\.dispatch_field_service_work_order[\s\S]*to authenticated/);
+  assert.doesNotMatch(migration, /grant (insert|update|delete).*field_service_work_orders to authenticated/i);
+  assert.match(server, /normalizeRpcError/);
+  assert.doesNotMatch(server, /error\.message[^;]*NextResponse|return[^;]*error\.message/);
+  for (const route of routes) {
+    assert.match(route, /withApiRequest/);
+    assert.match(route, /runFieldService/);
+  }
+});
