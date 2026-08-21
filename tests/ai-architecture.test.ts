@@ -1619,3 +1619,30 @@ test("FS1.3 keeps execution data append-only, tenant-bound and non-financial", a
   assert.match(runtime, /storage cleanup/);
   assert.match(runtime, /financial totals/);
 });
+
+test("FS1.4 keeps Field Service UI module-gated and delegates mutations to existing contracts", async () => {
+  const listPage = await file("src/app/(app)/app/[companySlug]/field-service/page.tsx");
+  const detailPage = await file("src/app/(app)/app/[companySlug]/field-service/[workOrderId]/page.tsx");
+  const list = await file("src/features/field-service/components/work-order-list.tsx");
+  const detail = await file("src/features/field-service/components/work-order-detail.tsx");
+  const contribution = await file("src/features/field-service/module-contribution.tsx");
+  const registry = await file("src/modules/registry.ts");
+
+  assert.match(listPage, /resolveCompanyModuleAccess/);
+  assert.match(listPage, /fieldServiceModule/);
+  assert.match(detailPage, /resolveCompanyModuleAccess/);
+  assert.match(detailPage, /field_service_work_orders/);
+  assert.match(list, /field-service\/work-orders/);
+  assert.match(listPage, /eq\("status", "accepted"\)/);
+  assert.match(detail, /\/assign/);
+  for (const action of ["dispatch", "start", "complete", "cancel"]) assert.match(detail, new RegExp(`\\"${action}\\"`));
+  for (const action of ["materials", "notes", "evidence/upload-url", "evidence", "signoff"]) assert.match(detail, new RegExp(`\\/${action}`));
+  assert.match(detail, /signedUrl/);
+  assert.match(detail, /Werkbon bijgewerkt/);
+  assert.match(contribution, /fieldServiceModule/);
+  assert.match(contribution, /quoteStatus !== "accepted"/);
+  assert.match(contribution, /field-service\?quoteId/);
+  assert.match(registry, /fieldServiceModuleContribution/);
+  assert.doesNotMatch(list, /createClient|supabase\.from/);
+  assert.doesNotMatch(detail, /createClient|supabase\.from/);
+});
