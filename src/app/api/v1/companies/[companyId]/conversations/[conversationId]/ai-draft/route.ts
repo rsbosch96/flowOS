@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { runAi } from "@/ai/gateway";
 import { classifySupportIntent, requiresHumanReview, type SupportIntent } from "@/ai/customer-service";
+import { retrieveApprovedKnowledge } from "@/ai/knowledge-server";
 import { createCustomerServiceSystemPrompt, createCustomerServiceUserPrompt } from "@/ai/prompts/customer-service";
 import { AiError } from "@/ai/errors";
 import { resolveCompanyModuleAccess } from "@/lib/entitlements/server";
@@ -45,7 +46,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ com
     const { data: customer } = conversation.customer_id
       ? await supabase.from("customers").select("name").eq("id", conversation.customer_id).eq("company_id", companyId).maybeSingle()
       : { data: null };
-    const { data: knowledge } = await supabase.from("ai_knowledge_entries").select("title,content").eq("company_id", companyId).eq("is_enabled", true).eq("is_approved", true).order("updated_at", { ascending: false }).limit(10);
+    const knowledge = await retrieveApprovedKnowledge(supabase, companyId, latest.body.slice(0, 500), { limit: 5 });
     const intent: SupportIntent = classifySupportIntent(latest.body);
     const userPrompt = createCustomerServiceUserPrompt({ intent, subject: conversation.subject, customerName: customer?.name ?? null, latestMessage: latest.body, approvedKnowledge: knowledge ?? [] });
 
@@ -59,7 +60,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ com
         systemPrompt: createCustomerServiceSystemPrompt(),
         userPrompt,
         schema: (await import("@/ai/customer-service")).supportReplySchema,
-        metadata: { source: "conversation", intent, knowledgeCount: knowledge?.length ?? 0 },
+        metadata: { source: "conversation", intent, knowledgeCount: knowledge.length, knowledgeIds: knowledge.map((entry) => entry.id).join(",") },
       }, async ({ data, runId }) => {
         const reviewRequired = data.requiresHumanReview || requiresHumanReview(intent);
         const { data: draftId, error: draftError } = await createAdminClient().rpc("create_ai_reply_draft", {

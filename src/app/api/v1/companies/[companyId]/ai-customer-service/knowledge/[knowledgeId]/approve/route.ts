@@ -1,19 +1,21 @@
 import { NextResponse } from "next/server";
+import { accessFailureResponse, requireKnowledgeAccess } from "@/ai/knowledge-server";
 import { recordServerAuditEvent } from "@/lib/audit/server";
-import { resolveCompanyModuleAccess } from "@/lib/entitlements/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
 export async function POST(_request: Request, { params }: { params: Promise<{ companyId: string; knowledgeId: string }> }) {
   const { companyId, knowledgeId } = await params;
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return NextResponse.json({ error: { code: "UNAUTHENTICATED", message: "Log opnieuw in." } }, { status: 401 });
-  const { data: membership } = await supabase.from("company_memberships").select("role").eq("company_id", companyId).eq("user_id", user.id).maybeSingle();
-  if (!membership || membership.role !== "owner") return NextResponse.json({ error: { code: "FORBIDDEN", message: "Alleen een eigenaar kan kennis goedkeuren." } }, { status: 403 });
-  if (await resolveCompanyModuleAccess(supabase, companyId, "ai_customer_service") !== "MODULE_AVAILABLE") return NextResponse.json({ error: { code: "MODULE_UNAVAILABLE", message: "AI-klantenservice is momenteel niet beschikbaar." } }, { status: 403 });
-  const { data, error } = await createAdminClient().from("ai_knowledge_entries").update({ is_approved: true, approved_by: user.id, approved_at: new Date().toISOString() }).eq("id", knowledgeId).eq("company_id", companyId).select("id,is_approved").maybeSingle();
-  if (error || !data) return NextResponse.json({ error: { code: "KNOWLEDGE_NOT_FOUND", message: "Kennisitem niet gevonden." } }, { status: 404 });
-  await recordServerAuditEvent({ companyId, actorUserId: user.id, action: "ai_customer_service.knowledge_approved", entityType: "ai_knowledge_entry", entityId: knowledgeId, metadata: { status: "approved" } });
+  const access = await requireKnowledgeAccess(supabase, companyId, "owner");
+  if (!access.ok) return NextResponse.json(accessFailureResponse(access), { status: access.status });
+  const admin = createAdminClient();
+  const { data: existing, error: lookupError } = await admin.from("ai_knowledge_entries").select("id,is_approved,is_enabled").eq("id", knowledgeId).eq("company_id", companyId).maybeSingle();
+  if (lookupError || !existing) return NextResponse.json({ error: { code: "KNOWLEDGE_NOT_FOUND", message: "Kennisitem niet gevonden." } }, { status: 404 });
+  if (existing.is_approved) return NextResponse.json({ error: { code: "KNOWLEDGE_ALREADY_APPROVED", message: "Kennisitem is al goedgekeurd." } }, { status: 409 });
+  if (!existing.is_enabled) return NextResponse.json({ error: { code: "KNOWLEDGE_DISABLED", message: "Kennisitem is uitgeschakeld." } }, { status: 409 });
+  const { data, error } = await admin.from("ai_knowledge_entries").update({ is_approved: true, approved_by: access.access.userId, approved_at: new Date().toISOString() }).eq("id", knowledgeId).eq("company_id", companyId).select("id,is_approved,approved_by,approved_at").maybeSingle();
+  if (error || !data) return NextResponse.json({ error: { code: "KNOWLEDGE_INVALID", message: "Kennisitem kon niet worden goedgekeurd." } }, { status: 400 });
+  await recordServerAuditEvent({ companyId, actorUserId: access.access.userId, action: "ai_customer_service.knowledge_approved", entityType: "ai_knowledge_entry", entityId: knowledgeId, metadata: { status: "approved" } });
   return NextResponse.json(data);
 }

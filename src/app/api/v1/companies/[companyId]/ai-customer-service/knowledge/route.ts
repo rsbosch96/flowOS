@@ -1,35 +1,61 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { accessFailureResponse, requireKnowledgeAccess, retrieveApprovedKnowledge } from "@/ai/knowledge-server";
 import { recordServerAuditEvent } from "@/lib/audit/server";
-import { resolveCompanyModuleAccess } from "@/lib/entitlements/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
 const inputSchema = z.object({
   title: z.string().trim().min(1).max(200),
   content: z.string().trim().min(1).max(12000),
-  sourceType: z.enum(["manual", "faq", "catalog", "document_reference"]).default("manual"),
-  sourceReference: z.string().uuid().nullable().optional(),
+  sourceType: z.enum(["manual", "faq"]).default("manual"),
 });
 
-async function requireOwner(companyId: string) {
+function errorResponse(code: string, message: string, status: number) {
+  return NextResponse.json({ error: { code, message } }, { status });
+}
+
+export async function GET(request: Request, { params }: { params: Promise<{ companyId: string }> }) {
+  const { companyId } = await params;
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { error: NextResponse.json({ error: { code: "UNAUTHENTICATED", message: "Log opnieuw in." } }, { status: 401 }) };
-  const { data: membership } = await supabase.from("company_memberships").select("role").eq("company_id", companyId).eq("user_id", user.id).maybeSingle();
-  if (!membership || membership.role !== "owner") return { error: NextResponse.json({ error: { code: "FORBIDDEN", message: "Alleen een eigenaar kan kennis beheren." } }, { status: 403 }) };
-  if (await resolveCompanyModuleAccess(supabase, companyId, "ai_customer_service") !== "MODULE_AVAILABLE") return { error: NextResponse.json({ error: { code: "MODULE_UNAVAILABLE", message: "AI-klantenservice is momenteel niet beschikbaar." } }, { status: 403 }) };
-  return { supabase, user };
+  const access = await requireKnowledgeAccess(supabase, companyId, "reader");
+  if (!access.ok) return NextResponse.json(accessFailureResponse(access), { status: access.status });
+
+  const url = new URL(request.url);
+  const search = url.searchParams.get("q");
+  if (search !== null) {
+    const normalizedSearch = search.replace(/\s+/g, " ").trim();
+    if (!normalizedSearch || normalizedSearch.length > 500) return errorResponse("KNOWLEDGE_SEARCH_INVALID", "Geef een korte zoekvraag op.", 400);
+    const items = await retrieveApprovedKnowledge(supabase, companyId, normalizedSearch, { limit: 5 });
+    return NextResponse.json({ items, count: items.length, nextOffset: null });
+  }
+  const requestedLimit = Number(url.searchParams.get("limit") ?? "20");
+  const requestedOffset = Number(url.searchParams.get("offset") ?? "0");
+  const limit = Number.isInteger(requestedLimit) ? Math.max(1, Math.min(requestedLimit, 50)) : 20;
+  const offset = Number.isInteger(requestedOffset) ? Math.max(0, Math.min(requestedOffset, 10_000)) : 0;
+  const admin = createAdminClient();
+  let query = admin.from("ai_knowledge_entries")
+    .select("id,title,content,source_type,is_enabled,is_approved,approved_by,approved_at,created_by,created_at,updated_at", { count: "exact" })
+    .eq("company_id", companyId)
+    .order("updated_at", { ascending: false })
+    .range(offset, offset + limit - 1);
+  if (access.access.role !== "owner") query = query.eq("is_enabled", true).eq("is_approved", true);
+  const { data, count, error } = await query;
+  if (error) return errorResponse("KNOWLEDGE_INVALID", "Kennis kon niet worden geladen.", 500);
+  return NextResponse.json({ items: data ?? [], count: count ?? 0, nextOffset: (offset + limit) < (count ?? 0) ? offset + limit : null });
 }
 
 export async function POST(request: Request, { params }: { params: Promise<{ companyId: string }> }) {
   const { companyId } = await params;
-  const access = await requireOwner(companyId);
-  if ("error" in access) return access.error;
-  const input = inputSchema.safeParse(await request.json());
-  if (!input.success) return NextResponse.json({ error: { code: "INVALID_KNOWLEDGE", message: "Controleer titel en inhoud." } }, { status: 400 });
-  const { data, error } = await createAdminClient().from("ai_knowledge_entries").insert({ company_id: companyId, title: input.data.title, content: input.data.content, source_type: input.data.sourceType, source_reference: input.data.sourceReference ?? null, created_by: access.user.id }).select("id,title,is_approved").single();
-  if (error || !data) return NextResponse.json({ error: { code: "KNOWLEDGE_SAVE_FAILED", message: "Kennis kon niet worden opgeslagen." } }, { status: 500 });
-  await recordServerAuditEvent({ companyId, actorUserId: access.user.id, action: "ai_customer_service.knowledge_added", entityType: "ai_knowledge_entry", entityId: data.id, metadata: { source_type: input.data.sourceType, status: "unapproved" } });
+  const supabase = await createClient();
+  const access = await requireKnowledgeAccess(supabase, companyId, "owner");
+  if (!access.ok) return NextResponse.json(accessFailureResponse(access), { status: access.status });
+  let body: unknown;
+  try { body = await request.json(); } catch { return errorResponse("KNOWLEDGE_INVALID", "Controleer titel en inhoud.", 400); }
+  const input = inputSchema.safeParse(body);
+  if (!input.success) return errorResponse("KNOWLEDGE_INVALID", "Controleer titel, inhoud en brontype.", 400);
+  const { data, error } = await createAdminClient().from("ai_knowledge_entries").insert({ company_id: companyId, title: input.data.title, content: input.data.content, source_type: input.data.sourceType, source_reference: null, created_by: access.access.userId }).select("id,title,is_approved,is_enabled,source_type").single();
+  if (error || !data) return errorResponse("KNOWLEDGE_INVALID", "Kennis kon niet worden opgeslagen.", 400);
+  await recordServerAuditEvent({ companyId, actorUserId: access.access.userId, action: "ai_customer_service.knowledge_added", entityType: "ai_knowledge_entry", entityId: data.id, metadata: { source_type: input.data.sourceType, status: "unapproved" } });
   return NextResponse.json(data, { status: 201 });
 }

@@ -25,6 +25,7 @@ import { createArtifactInventory, verifyArtifactInventory } from "../scripts/ope
 import { RECOVERY_CONFIRMATION, RecoverySafetyError, assertRecoveryProviderKillSwitch, assertSafeRecoveryTarget } from "../scripts/operations/recovery-safety.mjs";
 import { exportStorageFixture, restoreStorageFixture, verifyStorageArtifact } from "../scripts/operations/storage-backup-local.mjs";
 import { classifySupportIntent, createDeterministicMockReply, requiresHumanReview, supportReplySchema } from "../src/ai/customer-service.ts";
+import { rankKnowledgeEntries } from "../src/ai/knowledge-retrieval.ts";
 
 const file = (path: string) => readFile(resolve(process.cwd(), path), "utf8");
 const execFileAsync = promisify(execFile);
@@ -91,10 +92,13 @@ test("AICS1.1 provider boundary cannot send Core messages or mutate finances", a
 
 test("AICS1.1 context is limited to one conversation, its customer and approved knowledge", async () => {
   const route = await file("src/app/api/v1/companies/[companyId]/conversations/[conversationId]/ai-draft/route.ts");
+  const knowledgeServer = await file("src/ai/knowledge-server.ts");
   assert.match(route, /eq\("conversation_id", conversationId\)/);
   assert.match(route, /eq\("company_id", companyId\)/);
-  assert.match(route, /is_approved.*true/);
-  assert.match(route, /limit\(10\)/);
+  assert.match(knowledgeServer, /is_approved.*true/);
+  assert.match(knowledgeServer, /is_enabled.*true/);
+  assert.match(knowledgeServer, /limit\(KNOWLEDGE_SCAN_LIMIT\)/);
+  assert.match(knowledgeServer, /KNOWLEDGE_CONTEXT_ENTRY_MAX_LENGTH/);
   assert.doesNotMatch(route, /\.from\("customers"\)\.select\("\*"\)/);
   assert.doesNotMatch(route, /\.from\("conversations"\)\.select\("\*"\)/);
 });
@@ -114,6 +118,71 @@ test("AICS1.1 prompt-injection text cannot grant permissions or disclose context
   assert.equal(intent, "unknown");
   assert.equal(reply.requiresHumanReview, true);
   assert.doesNotMatch(reply.body, /invoice|customer|SQL|instruct/i);
+});
+
+test("AICS1.2 exposes narrow knowledge management routes with normalized errors", async () => {
+  const listRoute = await file("src/app/api/v1/companies/[companyId]/ai-customer-service/knowledge/route.ts");
+  const readRoute = await file("src/app/api/v1/companies/[companyId]/ai-customer-service/knowledge/[knowledgeId]/route.ts");
+  const approveRoute = await file("src/app/api/v1/companies/[companyId]/ai-customer-service/knowledge/[knowledgeId]/approve/route.ts");
+  const disableRoute = await file("src/app/api/v1/companies/[companyId]/ai-customer-service/knowledge/[knowledgeId]/disable/route.ts");
+  for (const route of [listRoute, readRoute, approveRoute, disableRoute]) {
+    assert.match(route, /requireKnowledgeAccess/);
+    assert.match(route, /companyId/);
+    assert.doesNotMatch(route, /error\.message[^;]*NextResponse|return[^;]*error\.message/);
+  }
+  assert.match(listRoute, /export async function GET/);
+  assert.match(listRoute, /export async function POST/);
+  assert.match(listRoute, /searchParams\.get\("q"\)/);
+  assert.match(listRoute, /KNOWLEDGE_SEARCH_INVALID/);
+  assert.match(listRoute, /sourceType.*manual.*faq/);
+  assert.match(approveRoute, /KNOWLEDGE_ALREADY_APPROVED/);
+  assert.match(disableRoute, /KNOWLEDGE_DISABLED/);
+  assert.match(readRoute, /KNOWLEDGE_NOT_FOUND/);
+});
+
+test("AICS1.2 lexical retrieval is approved/enabled only, bounded and deterministic", () => {
+  const entries = [
+    { id: "b", title: "Warmtepomp onderhoud", content: "Onderhoud op afspraak.", source_type: "manual" as const, updated_at: "2026-01-02" },
+    { id: "a", title: "Openingstijden", content: "Maandag tot vrijdag.", source_type: "faq" as const, updated_at: "2026-01-03" },
+    { id: "c", title: "Andere tenant", content: "Niet ingevoerd in deze lijst.", source_type: "manual" as const, updated_at: "2026-01-04" },
+  ];
+  assert.deepEqual(rankKnowledgeEntries(entries, "warmtepomp", 5).map((entry) => entry.id), ["b"]);
+  assert.deepEqual(rankKnowledgeEntries(entries, "onbekend onderwerp", 5), []);
+  assert.equal(rankKnowledgeEntries(entries, "openingstijden", 99).length, 1);
+});
+
+test("AICS1.2 keeps knowledge data separate from server policy and conversation context", async () => {
+  const prompt = await file("src/ai/prompts/customer-service.ts");
+  const route = await file("src/app/api/v1/companies/[companyId]/conversations/[conversationId]/ai-draft/route.ts");
+  assert.match(prompt, /SERVER POLICY/);
+  assert.match(prompt, /KNOWLEDGE DATA/);
+  assert.match(prompt, /CONVERSATION DATA/);
+  assert.match(prompt, /onbetrouwbare context/);
+  assert.match(route, /retrieveApprovedKnowledge/);
+  assert.match(route, /knowledgeIds/);
+  assert.match(route, /limit: 5/);
+  assert.doesNotMatch(route, /outbound|sendMessage|resend|stripe/i);
+});
+
+test("AICS1.2 role, audit and direct Data API boundaries remain server-controlled", async () => {
+  const server = await file("src/ai/knowledge-server.ts");
+  const migration = await file("supabase/migrations/20260822073043_aics1_1_customer_service_foundation.sql");
+  const runtime = await file("tests/aics1-2-runtime.mjs");
+  assert.match(server, /membership\.role/);
+  assert.match(server, /owner/);
+  assert.match(server, /employee/);
+  assert.match(server, /MODULE_AVAILABLE/);
+  assert.match(migration, /grant select on table public\.ai_knowledge_entries to authenticated/);
+  assert.doesNotMatch(migration, /grant (insert|update|delete).*ai_knowledge_entries to authenticated/i);
+  assert.match(migration, /created_by uuid not null/);
+  assert.match(migration, /approved_by uuid/);
+  assert.match(await file("src/app/api/v1/companies/[companyId]/ai-customer-service/knowledge/route.ts"), /knowledge_added/);
+  assert.match(await file("src/app/api/v1/companies/[companyId]/ai-customer-service/knowledge/[knowledgeId]/approve/route.ts"), /knowledge_approved/);
+  assert.match(await file("src/app/api/v1/companies/[companyId]/ai-customer-service/knowledge/[knowledgeId]/disable/route.ts"), /knowledge_disabled/);
+  assert.match(runtime, /supabase", "db", "reset", "--local", "--no-seed/);
+  assert.doesNotMatch(runtime, /--linked|ivifmemxvgglvnnarubt|lkmzwhbbffppyiiiyswk/);
+  assert.match(runtime, /direct Data API/);
+  assert.match(runtime, /Tenant B/);
 });
 
 async function sourceFiles(directory: string): Promise<string[]> {
