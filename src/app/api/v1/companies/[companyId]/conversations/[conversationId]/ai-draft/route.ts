@@ -103,6 +103,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ com
           target_intent: intent,
           target_requires_review: reviewRequired,
         });
+        if (draftError?.message === "AICS_HUMAN_OWNED") throw new Error("AICS_HUMAN_OWNED");
         if (draftError || !draftId) throw new Error("AICS_DRAFT_STORAGE_FAILED");
         return { draftId: draftId as string };
       });

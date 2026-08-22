@@ -248,6 +248,14 @@ test("AICS1.3 serializes takeover and generation at the database boundary", asyn
   assert.match(takeover, /takeover_ai_conversation/);
 });
 
+test("AICS1.3 preserves the canonical human-owned conflict from draft storage", async () => {
+  const route = await file("src/app/api/v1/companies/[companyId]/conversations/[conversationId]/ai-draft/route.ts");
+  assert.match(route, /draftError\?\.message === "AICS_HUMAN_OWNED"/);
+  assert.match(route, /throw new Error\("AICS_HUMAN_OWNED"\)/);
+  assert.match(route, /code: "AICS_HUMAN_OWNED"[\s\S]*status: 409/);
+  assert.match(route, /AICS_DRAFT_STORAGE_FAILED/);
+});
+
 test("AICS1.3 mock failure injection is local-only and reserved", async () => {
   const provider = await file("src/ai/providers/openai-provider.ts");
   assert.match(provider, /AICS_LOCAL_RUNTIME_PROOF/);
