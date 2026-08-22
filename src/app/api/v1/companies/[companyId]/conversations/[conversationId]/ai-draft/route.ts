@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { runAi } from "@/ai/gateway";
-import { classifySupportIntent, requiresHumanReview, type SupportIntent } from "@/ai/customer-service";
+import { supportReplySchema } from "@/ai/customer-service";
+import { classifyCustomerMessage } from "@/ai/customer-service-workflow";
 import { retrieveApprovedKnowledge } from "@/ai/knowledge-server";
 import { createCustomerServiceSystemPrompt, createCustomerServiceUserPrompt } from "@/ai/prompts/customer-service";
 import { AiError } from "@/ai/errors";
@@ -10,8 +11,8 @@ import { createClient } from "@/lib/supabase/server";
 import { logServerEvent, withApiRequest } from "@/lib/observability/server";
 
 function safeFailure(error: unknown) {
-  if (error instanceof AiError) return { code: "AI_DRAFT_FAILED", message: "Het antwoordconcept kon niet veilig worden gemaakt." };
-  return { code: "AI_DRAFT_FAILED", message: "Het antwoordconcept kon niet veilig worden gemaakt." };
+  if (error instanceof AiError) return { code: "AICS_GENERATION_FAILED", message: "Het antwoordconcept kon niet veilig worden gemaakt." };
+  return { code: "AICS_GENERATION_FAILED", message: "Het antwoordconcept kon niet veilig worden gemaakt." };
 }
 
 export async function POST(request: Request, { params }: { params: Promise<{ companyId: string; conversationId: string }> }) {
@@ -46,8 +47,31 @@ export async function POST(request: Request, { params }: { params: Promise<{ com
     const { data: customer } = conversation.customer_id
       ? await supabase.from("customers").select("name").eq("id", conversation.customer_id).eq("company_id", companyId).maybeSingle()
       : { data: null };
+    const admin = createAdminClient();
+    const { data: existingDraft } = await admin
+      .from("ai_reply_drafts")
+      .select("id,ai_run_id,review_status,provenance")
+      .eq("company_id", companyId)
+      .eq("conversation_id", conversationId)
+      .eq("source_message_id", latest.id)
+      .eq("review_status", "draft")
+      .maybeSingle();
+    if (existingDraft) {
+      const classification = classifyCustomerMessage(latest.body);
+      return NextResponse.json({
+        draftId: existingDraft.id,
+        aiRunId: existingDraft.ai_run_id,
+        intent: classification.intent,
+        reviewRequired: true,
+        escalationRequired: classification.requiresHumanReview,
+        reasonCategory: classification.reasonCategory,
+        reused: true,
+      }, { status: 200 });
+    }
+
     const knowledge = await retrieveApprovedKnowledge(supabase, companyId, latest.body.slice(0, 500), { limit: 5 });
-    const intent: SupportIntent = classifySupportIntent(latest.body);
+    const classification = classifyCustomerMessage(latest.body);
+    const intent = classification.intent;
     const userPrompt = createCustomerServiceUserPrompt({ intent, subject: conversation.subject, customerName: customer?.name ?? null, latestMessage: latest.body, approvedKnowledge: knowledge ?? [] });
 
     try {
@@ -59,11 +83,13 @@ export async function POST(request: Request, { params }: { params: Promise<{ com
         locale: "nl-NL",
         systemPrompt: createCustomerServiceSystemPrompt(),
         userPrompt,
-        schema: (await import("@/ai/customer-service")).supportReplySchema,
+        schema: supportReplySchema,
         metadata: { source: "conversation", intent, knowledgeCount: knowledge.length, knowledgeIds: knowledge.map((entry) => entry.id).join(",") },
       }, async ({ data, runId }) => {
-        const reviewRequired = data.requiresHumanReview || requiresHumanReview(intent);
-        const { data: draftId, error: draftError } = await createAdminClient().rpc("create_ai_reply_draft", {
+        // Human review is the default for every AICS draft. High-risk intents
+        // additionally carry an escalation reason; neither path emits a message.
+        const reviewRequired = true;
+        const { data: draftId, error: draftError } = await admin.rpc("create_ai_reply_draft", {
           target_company_id: companyId,
           target_conversation_id: conversationId,
           target_source_message_id: latest.id,
@@ -76,7 +102,15 @@ export async function POST(request: Request, { params }: { params: Promise<{ com
         if (draftError || !draftId) throw new Error("AICS_DRAFT_STORAGE_FAILED");
         return { draftId: draftId as string };
       });
-      return NextResponse.json({ draftId: result.draftId, aiRunId: result.runId, intent, reviewRequired: requiresHumanReview(intent) }, { status: 201 });
+      return NextResponse.json({
+        draftId: result.draftId,
+        aiRunId: result.runId,
+        intent,
+        reviewRequired: true,
+        escalationRequired: classification.requiresHumanReview,
+        reasonCategory: classification.reasonCategory,
+        reused: false,
+      }, { status: 201 });
     } catch (error) {
       const failure = safeFailure(error);
       logServerEvent({ level: "error", event: "ai_customer_service.draft_failed", requestId, route: "/api/v1/companies/:companyId/conversations/:conversationId/ai-draft", companyId, actorId: user.id, errorCode: failure.code });

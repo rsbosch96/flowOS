@@ -46,7 +46,7 @@ export function classifySupportIntent(text: string): SupportIntent {
   if (/mens|medewerker|iemand spreken|bel mij/.test(value)) return "human_requested";
   if (/privacy|persoonsgegeven|gegevens verwijderen|avg/.test(value)) return "privacy";
   if (/juridisch|recht|contract|aansprak/.test(value)) return "legal";
-  if (/wachtwoord|account|rol|beheerder|toegang/.test(value)) return "account_changes";
+  if (/wachtwoord|account|rol|beheerder|toegang|eigenaar|owner|admin/.test(value)) return "account_changes";
   if (/hack|lek|beveilig|security/.test(value)) return "security";
   if (/storing|werkt niet|foutmelding|installatie/.test(value)) return "technical_support";
   if (/offerte|voorstel|aanbod/.test(value)) return "quote_question";
