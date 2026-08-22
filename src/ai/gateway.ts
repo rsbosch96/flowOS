@@ -12,6 +12,10 @@ function aiRunKind(feature: AiRequest<unknown>["feature"]) {
   return "reply_draft";
 }
 
+function aiPromptVersion(feature: AiRequest<unknown>["feature"]) {
+  return feature === "support_reply" ? "customer-service-v1" : "quote-gateway-v1";
+}
+
 function safeMetadata(metadata: AiRequest<unknown>["metadata"]): Record<string, string | number | boolean> {
   return Object.fromEntries(Object.entries(metadata ?? {}).filter(([key, value]) =>
     !/(prompt|document|content|text|email|name)/i.test(key)
@@ -59,7 +63,7 @@ async function createRunRepository(request: AiRequest<unknown>): Promise<Rc1Rese
         target_company_id: request.companyId,
         target_initiated_by: request.userId,
         requested_kind: aiRunKind(request.feature),
-        requested_prompt_version: "quote-gateway-v1",
+        requested_prompt_version: aiPromptVersion(request.feature),
         requested_metadata: runMetadata,
         requested_provider: "openai",
         requested_model: requestedModel(request),

@@ -2,6 +2,7 @@ import "server-only";
 import type { AiProvider, AiRequest } from "@/ai/types";
 import { AiConfigurationError, AiProviderError, AiRateLimitError, AiTimeoutError, AiValidationError } from "@/ai/errors";
 import { assertRc1InputLimit, getRc1SpikeConfig } from "@/ai/rc1-spike";
+import { createDeterministicMockReply, classifySupportIntent } from "@/ai/customer-service";
 
 function mockCatalogItemName(userPrompt: string) {
   const catalog = userPrompt.split("Beschikbare catalogusproducten (zonder prijzen):\n")[1]?.split("\n\n")[0];
@@ -18,6 +19,12 @@ export class OpenAiProvider implements AiProvider {
 
   async generate<T>(request: AiRequest<T>) {
     if (process.env.AI_MODE === "mock") {
+      if (request.feature === "support_reply") {
+        const intent = classifySupportIntent(request.userPrompt);
+        const parsedSupport = request.schema.safeParse(createDeterministicMockReply(intent));
+        if (!parsedSupport.success) throw new AiValidationError("Mock-klantserviceantwoord voldoet niet aan schema.");
+        return { data: parsedSupport.data, provider: this.name, model: "mock", usage: {} };
+      }
       const catalogItemName = mockCatalogItemName(request.userPrompt);
       const parsed = request.schema.safeParse({
         title: "Offerteconcept - installatiewerkzaamheden",

@@ -49,9 +49,10 @@ export type AiResult<T> = {
   confidence?: number;
   runId: string;
   quoteId?: string;
+  draftId?: string;
 };
 
-export type AiPersistenceResult = { quoteId?: string };
+export type AiPersistenceResult = { quoteId?: string; draftId?: string };
 export type AiPersistence<T> = (context: { data: T; runId: string }) => Promise<AiPersistenceResult>;
 
 export interface AiProvider {

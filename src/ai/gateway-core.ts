@@ -8,6 +8,7 @@ export type AiRunRepository = {
     runId: string;
     status: "succeeded" | "failed";
     quoteId?: string;
+    draftId?: string;
     provider?: AiProviderName;
     model?: string;
     inputTokens?: number;
@@ -55,7 +56,7 @@ export async function executeAiRun<T>(
       currency: cost.currency,
       durationMs,
     });
-    return { ...generated, runId, quoteId: stored.quoteId, durationMs };
+    return { ...generated, runId, quoteId: stored.quoteId, draftId: stored.draftId, durationMs };
   } catch (error) {
     const durationMs = Date.now() - startedAt;
     try {
