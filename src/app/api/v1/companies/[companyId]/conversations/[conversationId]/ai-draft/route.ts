@@ -15,6 +15,10 @@ function safeFailure(error: unknown) {
   return { code: "AICS_GENERATION_FAILED", message: "Het antwoordconcept kon niet veilig worden gemaakt." };
 }
 
+function isHumanOwnedConflict(error: unknown) {
+  return error instanceof Error && error.message === "AICS_HUMAN_OWNED";
+}
+
 export async function POST(request: Request, { params }: { params: Promise<{ companyId: string; conversationId: string }> }) {
   return withApiRequest(request, { route: "/api/v1/companies/:companyId/conversations/:conversationId/ai-draft" }, async (requestId) => {
     const { companyId, conversationId } = await params;
@@ -112,6 +116,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ com
         reused: false,
       }, { status: 201 });
     } catch (error) {
+      if (isHumanOwnedConflict(error)) {
+        return NextResponse.json({ error: { code: "AICS_HUMAN_OWNED", message: "Deze aanvraag is overgedragen aan een medewerker." } }, { status: 409 });
+      }
       const failure = safeFailure(error);
       logServerEvent({ level: "error", event: "ai_customer_service.draft_failed", requestId, route: "/api/v1/companies/:companyId/conversations/:conversationId/ai-draft", companyId, actorId: user.id, errorCode: failure.code });
       return NextResponse.json({ error: failure }, { status: 502 });

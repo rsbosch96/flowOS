@@ -108,7 +108,7 @@ test("AICS1.1 human takeover blocks normal AI assistance and keeps state auditab
   const route = await file("src/app/api/v1/companies/[companyId]/conversations/[conversationId]/ai-draft/route.ts");
   const takeover = await file("src/app/api/v1/companies/[companyId]/conversations/[conversationId]/ai-draft/takeover/route.ts");
   assert.match(route, /ownership_state === "human_owned"/);
-  assert.match(takeover, /ownership_state: "human_owned"/);
+  assert.match(takeover, /takeover_ai_conversation/);
   assert.match(takeover, /ai_customer_service\.human_takeover/);
 });
 
@@ -235,6 +235,25 @@ test("AICS1.3 takeover is idempotent, role-gated and blocks generation", async (
   assert.match(route, /escalationRequired/);
   assert.match(route, /ownership_state === "human_owned"/);
   assert.match(route, /AICS_GENERATION_FAILED/);
+});
+
+test("AICS1.3 serializes takeover and generation at the database boundary", async () => {
+  const migration = await file("supabase/migrations/20260822162810_aics1_3_concurrency_guard.sql");
+  const route = await file("src/app/api/v1/companies/[companyId]/conversations/[conversationId]/ai-draft/route.ts");
+  const takeover = await file("src/app/api/v1/companies/[companyId]/conversations/[conversationId]/ai-draft/takeover/route.ts");
+  assert.match(migration, /for update/);
+  assert.match(migration, /AICS_HUMAN_OWNED/);
+  assert.match(migration, /create or replace function public\.takeover_ai_conversation/);
+  assert.match(route, /AICS_HUMAN_OWNED/);
+  assert.match(takeover, /takeover_ai_conversation/);
+});
+
+test("AICS1.3 mock failure injection is local-only and reserved", async () => {
+  const provider = await file("src/ai/providers/openai-provider.ts");
+  assert.match(provider, /AICS_LOCAL_RUNTIME_PROOF/);
+  assert.match(provider, /AICS_TEST_PROVIDER_FAILURE/);
+  assert.match(provider, /process\.env\.VERCEL !== "1"/);
+  assert.doesNotMatch(provider, /AICS_LOCAL_RUNTIME_PROOF\s*=\s*['"]1['"]/);
 });
 
 test("AICS1.3 mock provider consumes server classification metadata, never prompt instructions", async () => {

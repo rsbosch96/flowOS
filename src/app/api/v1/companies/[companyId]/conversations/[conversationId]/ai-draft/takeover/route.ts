@@ -15,51 +15,21 @@ export async function POST(request: Request, { params }: { params: Promise<{ com
     const { data: membership } = await supabase.from("company_memberships").select("role").eq("company_id", companyId).eq("user_id", user.id).maybeSingle();
     if (!membership || !["owner", "employee"].includes(membership.role)) return NextResponse.json({ error: { code: "AICS_ACCESS_FORBIDDEN", message: safeAicsMessage("AICS_ACCESS_FORBIDDEN") } }, { status: 403 });
     if (await resolveCompanyModuleAccess(supabase, companyId, "ai_customer_service") !== "MODULE_AVAILABLE") return NextResponse.json({ error: { code: "AICS_NOT_AVAILABLE", message: safeAicsMessage("AICS_NOT_AVAILABLE") } }, { status: 403 });
-    const { data: conversation } = await supabase.from("conversations").select("id").eq("id", conversationId).eq("company_id", companyId).maybeSingle();
-    if (!conversation) return NextResponse.json({ error: { code: "AICS_CONVERSATION_NOT_FOUND", message: safeAicsMessage("AICS_CONVERSATION_NOT_FOUND") } }, { status: 404 });
-
     const admin = createAdminClient();
-    const { data: currentState } = await admin
-      .from("ai_conversation_state")
-      .select("ownership_state,escalation_state,latest_intent")
-      .eq("conversation_id", conversationId)
-      .eq("company_id", companyId)
-      .maybeSingle();
-    if (currentState?.ownership_state === "human_owned") {
-      return NextResponse.json({ ok: true, ownershipState: "human_owned", alreadyOwned: true });
+    const { data: transition, error: transitionError } = await admin.rpc("takeover_ai_conversation", {
+      target_company_id: companyId,
+      target_conversation_id: conversationId,
+      target_actor_id: user.id,
+    });
+    if (transitionError) {
+      const code = transitionError.message.includes("AICS_CONVERSATION_NOT_FOUND") ? "AICS_CONVERSATION_NOT_FOUND" : "AICS_INVALID_TRANSITION";
+      const status = code === "AICS_CONVERSATION_NOT_FOUND" ? 404 : 409;
+      return NextResponse.json({ error: { code, message: safeAicsMessage(code as "AICS_CONVERSATION_NOT_FOUND" | "AICS_INVALID_TRANSITION") } }, { status });
     }
 
-    let transitioned = false;
-    if (currentState) {
-      const { data: updated, error } = await admin
-        .from("ai_conversation_state")
-        .update({ ownership_state: "human_owned", escalation_state: "escalated", latest_intent: "human_requested" })
-        .eq("conversation_id", conversationId)
-        .eq("company_id", companyId)
-        .in("ownership_state", ["ai_assisted", "needs_review"])
-        .select("ownership_state")
-        .maybeSingle();
-      if (error) return NextResponse.json({ error: { code: "AICS_INVALID_TRANSITION", message: "Overdracht kon niet veilig worden opgeslagen." } }, { status: 409 });
-      transitioned = Boolean(updated);
-    } else {
-      const { error } = await admin.from("ai_conversation_state").insert({
-        company_id: companyId,
-        conversation_id: conversationId,
-        ownership_state: "human_owned",
-        escalation_state: "escalated",
-        latest_intent: "human_requested",
-      });
-      if (error) {
-        const { data: raced } = await admin.from("ai_conversation_state").select("ownership_state").eq("conversation_id", conversationId).eq("company_id", companyId).maybeSingle();
-        if (raced?.ownership_state === "human_owned") return NextResponse.json({ ok: true, ownershipState: "human_owned", alreadyOwned: true });
-        return NextResponse.json({ error: { code: "AICS_INVALID_TRANSITION", message: "Overdracht kon niet veilig worden opgeslagen." } }, { status: 409 });
-      }
-      transitioned = true;
-    }
-
-    if (transitioned) {
+    if (transition?.transitioned) {
       await recordServerAuditEvent({ companyId, actorUserId: user.id, action: "ai_customer_service.human_takeover", entityType: "conversation", entityId: conversationId, metadata: { status: "human_owned" } });
     }
-    return NextResponse.json({ ok: true, ownershipState: "human_owned", alreadyOwned: false });
+    return NextResponse.json({ ok: true, ownershipState: "human_owned", alreadyOwned: Boolean(transition?.already_owned) });
   });
 }

@@ -19,6 +19,14 @@ export class OpenAiProvider implements AiProvider {
 
   async generate<T>(request: AiRequest<T>) {
     if (process.env.AI_MODE === "mock") {
+      // Local-only deterministic failure hook for runtime proof. It is never
+      // enabled by default, is unavailable on Vercel, and requires the
+      // reserved synthetic marker in addition to the explicit harness flag.
+      if (process.env.AICS_LOCAL_RUNTIME_PROOF === "1"
+        && process.env.VERCEL !== "1"
+        && request.userPrompt.includes("[AICS_TEST_PROVIDER_FAILURE]")) {
+        throw new AiProviderError("AICS_TEST_PROVIDER_FAILURE");
+      }
       if (request.feature === "support_reply") {
         // The server has already classified the canonical Core message. Never
         // reclassify the policy/prompt envelope, which could contain unrelated
