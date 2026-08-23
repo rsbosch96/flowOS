@@ -14,6 +14,7 @@ export type ModuleNavigationItem = {
 
 export type ModuleNavigationContext = {
   root: string;
+  role?: string | null;
 };
 
 export type QuoteDetailActionContext = {

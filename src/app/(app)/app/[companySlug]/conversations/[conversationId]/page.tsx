@@ -4,6 +4,10 @@ import { Card } from "@/components/ui/card";
 import { ConversationActions } from "@/features/conversations/components/conversation-actions";
 import { createClient } from "@/lib/supabase/server";
 import { conversationStatusLabel } from "@/lib/status-labels";
+import { resolveCompanyModuleAccess } from "@/lib/entitlements/server";
+import { aiCustomerServiceModule } from "@/lib/entitlements/modules";
+import { AicsReviewPanel } from "@/features/ai-customer-service/components/review-panel";
+import type { AicsEscalationState, AicsIntent, AicsOwnershipState, AicsReviewStatus } from "@/features/ai-customer-service/ui";
 
 export default async function ConversationPage({ params }: { params: Promise<{ companySlug: string; conversationId: string }> }) {
   const { companySlug, conversationId } = await params;
@@ -24,6 +28,20 @@ export default async function ConversationPage({ params }: { params: Promise<{ c
     ? await supabase.from("company_memberships").select("role").eq("company_id", company.id).eq("user_id", user.id).maybeSingle()
     : { data: null };
   const canGenerateQuote = membership?.role === "owner" || membership?.role === "employee";
+  const aicsAvailable = (membership?.role === "owner" || membership?.role === "employee")
+    && await resolveCompanyModuleAccess(supabase, company.id, aiCustomerServiceModule) === "MODULE_AVAILABLE";
+  const { data: aicsState } = aicsAvailable
+    ? await supabase.from("ai_conversation_state").select("ownership_state,escalation_state,latest_intent").eq("company_id", company.id).eq("conversation_id", conversationId).maybeSingle()
+    : { data: null };
+  const { data: aicsDraft } = aicsAvailable
+    ? await supabase.from("ai_reply_drafts").select("id,body,provenance,review_status,ai_run_id").eq("company_id", company.id).eq("conversation_id", conversationId).order("created_at", { ascending: false }).limit(1).maybeSingle()
+    : { data: null };
+  const { data: aicsRun } = aicsAvailable && aicsDraft?.ai_run_id
+    ? await supabase.from("ai_runs").select("metadata").eq("id", aicsDraft.ai_run_id).maybeSingle()
+    : { data: null };
+  const knowledgeCount = aicsRun?.metadata && typeof aicsRun.metadata === "object" && !Array.isArray(aicsRun.metadata) && typeof (aicsRun.metadata as Record<string, unknown>).knowledgeCount === "number"
+    ? (aicsRun.metadata as Record<string, number>).knowledgeCount
+    : undefined;
   const messages = (conversation.conversation_messages as unknown as Array<{ direction: string; body: string; created_at: string }>).sort((a, b) => a.created_at.localeCompare(b.created_at));
   const customer = conversation.customers as unknown as { name: string; email: string | null } | null;
 
@@ -48,6 +66,15 @@ export default async function ConversationPage({ params }: { params: Promise<{ c
         </div>
         <ConversationActions companyId={company.id} companySlug={companySlug} conversationId={conversationId} status={conversation.status} canGenerateQuote={canGenerateQuote} />
       </Card>
+      {aicsAvailable && <AicsReviewPanel
+        companyId={company.id}
+        conversationId={conversationId}
+        ownershipState={(aicsState?.ownership_state as AicsOwnershipState | undefined) ?? null}
+        escalationState={(aicsState?.escalation_state as AicsEscalationState | undefined) ?? null}
+        intent={(aicsState?.latest_intent as AicsIntent | undefined) ?? null}
+        draft={aicsDraft ? { id: aicsDraft.id, body: aicsDraft.body, provenance: aicsDraft.provenance as "ai_generated" | "human_edited", review_status: aicsDraft.review_status as AicsReviewStatus } : null}
+        knowledgeCount={knowledgeCount}
+      />}
     </div>
   );
 }

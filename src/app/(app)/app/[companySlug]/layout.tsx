@@ -27,8 +27,12 @@ export default async function CompanyLayout({
   const { t } = getTranslations();
   const supabase = await createClient();
   const { data: company } = await supabase.from("companies").select("id").eq("slug", companySlug).maybeSingle();
+  const { data: { user } } = await supabase.auth.getUser();
+  const { data: membership } = user && company
+    ? await supabase.from("company_memberships").select("role").eq("company_id", company.id).eq("user_id", user.id).maybeSingle()
+    : { data: null };
   const moduleNavigation = company
-    ? getModuleNavigationItems(await getEnabledModuleContributions(supabase, company.id), { root })
+    ? getModuleNavigationItems(await getEnabledModuleContributions(supabase, company.id), { root, role: membership?.role ?? null })
     : [];
 
   return (

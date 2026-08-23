@@ -27,6 +27,7 @@ import { exportStorageFixture, restoreStorageFixture, verifyStorageArtifact } fr
 import { classifySupportIntent, createDeterministicMockReply, requiresHumanReview, supportReplySchema } from "../src/ai/customer-service.ts";
 import { AicsWorkflowErrorCode, canReviewDraft, classifyCustomerMessage, isHumanEdit, safeAicsMessage } from "../src/ai/customer-service-workflow.ts";
 import { rankKnowledgeEntries } from "../src/ai/knowledge-retrieval.ts";
+import { aicsEscalationLabel, aicsIntentLabel, aicsOwnershipLabel } from "../src/features/ai-customer-service/ui.ts";
 
 const file = (path: string) => readFile(resolve(process.cwd(), path), "utf8");
 const execFileAsync = promisify(execFile);
@@ -287,6 +288,50 @@ test("AICS1.3 workflow has no auto-send or financial action boundary", async () 
   assert.match(draft, /create_ai_reply_draft/);
   assert.match(review, /ai_customer_service\.draft_(approved|rejected)/);
   assert.match(takeover, /ai_customer_service\.human_takeover/);
+});
+
+test("AICS1.4 adds a gated human review interface without changing Core storage", async () => {
+  const listPage = await file("src/app/(app)/app/[companySlug]/conversations/page.tsx");
+  const detailPage = await file("src/app/(app)/app/[companySlug]/conversations/[conversationId]/page.tsx");
+  const panel = await file("src/features/ai-customer-service/components/review-panel.tsx");
+  const filters = await file("src/features/ai-customer-service/components/conversation-filters.tsx");
+  const contribution = await file("src/features/ai-customer-service/module-contribution.tsx");
+  const registry = await file("src/modules/registry.ts");
+  const reviewRoute = await file("src/app/api/v1/companies/[companyId]/conversations/[conversationId]/ai-draft/review/route.ts");
+  const layout = await file("src/app/(app)/app/[companySlug]/layout.tsx");
+
+  assert.match(listPage, /resolveCompanyModuleAccess/);
+  assert.match(listPage, /ai_conversation_state/);
+  assert.match(listPage, /ConversationFilters/);
+  assert.match(detailPage, /AicsReviewPanel/);
+  assert.match(detailPage, /aicsAvailable/);
+  assert.match(panel, /Genereer antwoordconcept/);
+  assert.match(panel, /AI-concept/);
+  assert.match(panel, /Goedkeuren/);
+  assert.match(panel, /Goedkeuren verstuurt niets/);
+  assert.match(panel, /Gesprek handmatig overnemen/);
+  assert.match(panel, /Menselijke beoordeling vereist/);
+  assert.match(panel, /aria-labelledby/);
+  assert.match(panel, /aics-draft-body/);
+  assert.match(filters, /Beoordeling nodig/);
+  assert.match(filters, /Menselijke overname/);
+  assert.match(contribution, /aiCustomerServiceModule/);
+  assert.match(contribution, /role === "technician"/);
+  assert.match(registry, /aiCustomerServiceModuleContribution/);
+  assert.match(layout, /role: membership\?\.role/);
+  assert.match(reviewRoute, /reviewStatus: z\.enum\(\["draft", "approved", "rejected"\]\)/);
+  assert.match(reviewRoute, /draft_edited/);
+  assert.doesNotMatch(panel, /OpenAI|Resend|Stripe|sendMessage|conversation_messages.*insert/i);
+  assert.doesNotMatch(panel, /payload\.error\?\.message|error\.message/);
+  assert.doesNotMatch(listPage, /create table|alter table|insert into public\./i);
+});
+
+test("AICS1.4 labels are safe Dutch fallbacks and preserve no-auto-send boundaries", () => {
+  assert.equal(aicsIntentLabel("billing_question"), "Factuurvraag");
+  assert.equal(aicsOwnershipLabel("human_owned"), "Overgenomen door medewerker");
+  assert.equal(aicsEscalationLabel("needs_review"), "Menselijke beoordeling vereist");
+  assert.equal(aicsIntentLabel("unexpected"), "Onbekend");
+  assert.equal(aicsOwnershipLabel("unexpected"), "Nog geen AI-analyse");
 });
 
 async function sourceFiles(directory: string): Promise<string[]> {

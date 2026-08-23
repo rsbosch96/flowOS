@@ -1,8 +1,9 @@
 import { planningModuleContribution } from "@/features/planning/module-contribution";
 import { fieldServiceModuleContribution } from "@/features/field-service/module-contribution";
+import { aiCustomerServiceModuleContribution } from "@/features/ai-customer-service/module-contribution";
 import type { ModuleContribution } from "@/modules/contracts";
 
-const registeredModuleContributions = [planningModuleContribution, fieldServiceModuleContribution] satisfies readonly ModuleContribution[];
+const registeredModuleContributions = [planningModuleContribution, fieldServiceModuleContribution, aiCustomerServiceModuleContribution] satisfies readonly ModuleContribution[];
 
 function validateModuleContributions(contributions: readonly ModuleContribution[]) {
   const moduleKeys = new Set<string>();

@@ -7,7 +7,7 @@ import { createClient } from "@/lib/supabase/server";
 import { canReviewDraft, isHumanEdit, safeAicsMessage } from "@/ai/customer-service-workflow";
 import { withApiRequest } from "@/lib/observability/server";
 
-const inputSchema = z.object({ reviewStatus: z.enum(["approved", "rejected"]), body: z.string().trim().min(1).max(12000).optional() });
+const inputSchema = z.object({ reviewStatus: z.enum(["draft", "approved", "rejected"]), body: z.string().trim().min(1).max(12000).optional() });
 
 export async function PATCH(request: Request, { params }: { params: Promise<{ companyId: string; conversationId: string }> }) {
   return withApiRequest(request, { route: "/api/v1/companies/:companyId/conversations/:conversationId/ai-draft/review" }, async () => {
@@ -38,6 +38,24 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ co
       .limit(1)
       .maybeSingle();
     if (!draft) return NextResponse.json({ error: { code: "AICS_DRAFT_NOT_FOUND", message: safeAicsMessage("AICS_DRAFT_NOT_FOUND") } }, { status: 404 });
+    if (input.reviewStatus === "draft") {
+      if (draft.review_status !== "draft" || !input.body) {
+        return NextResponse.json({ error: { code: "AICS_DRAFT_ALREADY_REVIEWED", message: safeAicsMessage("AICS_DRAFT_ALREADY_REVIEWED") } }, { status: 409 });
+      }
+      const { data: editedDraft, error: editError } = await admin
+        .from("ai_reply_drafts")
+        .update({ body: input.body, provenance: "human_edited" })
+        .eq("id", draft.id)
+        .eq("company_id", companyId)
+        .eq("review_status", "draft")
+        .select("id,review_status,provenance")
+        .maybeSingle();
+      if (editError || !editedDraft) {
+        return NextResponse.json({ error: { code: "AICS_INVALID_TRANSITION", message: safeAicsMessage("AICS_INVALID_TRANSITION") } }, { status: 409 });
+      }
+      await recordServerAuditEvent({ companyId, actorUserId: user.id, action: "ai_customer_service.draft_edited", entityType: "ai_reply_draft", entityId: draft.id, metadata: { status: "draft", provenance: "human_edited" } });
+      return NextResponse.json({ ok: true, draftId: draft.id, reviewStatus: editedDraft.review_status, provenance: editedDraft.provenance });
+    }
     if (!canReviewDraft(draft.review_status, input.reviewStatus)) {
       return NextResponse.json({ error: { code: "AICS_DRAFT_ALREADY_REVIEWED", message: safeAicsMessage("AICS_DRAFT_ALREADY_REVIEWED") } }, { status: 409 });
     }
