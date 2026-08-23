@@ -1,10 +1,9 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { recordServerAuditEvent } from "@/lib/audit/server";
 import { resolveCompanyModuleAccess } from "@/lib/entitlements/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
-import { canReviewDraft, isHumanEdit, safeAicsMessage } from "@/ai/customer-service-workflow";
+import { safeAicsMessage } from "@/ai/customer-service-workflow";
 import { withApiRequest } from "@/lib/observability/server";
 
 const inputSchema = z.object({ reviewStatus: z.enum(["draft", "approved", "rejected"]), body: z.string().trim().min(1).max(12000).optional() });
@@ -29,63 +28,28 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ co
     if (await resolveCompanyModuleAccess(supabase, companyId, "ai_customer_service") !== "MODULE_AVAILABLE") return NextResponse.json({ error: { code: "AICS_NOT_AVAILABLE", message: safeAicsMessage("AICS_NOT_AVAILABLE") } }, { status: 403 });
 
     const admin = createAdminClient();
-    const { data: draft } = await admin
-      .from("ai_reply_drafts")
-      .select("id,review_status,provenance")
-      .eq("company_id", companyId)
-      .eq("conversation_id", conversationId)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (!draft) return NextResponse.json({ error: { code: "AICS_DRAFT_NOT_FOUND", message: safeAicsMessage("AICS_DRAFT_NOT_FOUND") } }, { status: 404 });
-    if (input.reviewStatus === "draft") {
-      if (draft.review_status !== "draft" || !input.body) {
-        return NextResponse.json({ error: { code: "AICS_DRAFT_ALREADY_REVIEWED", message: safeAicsMessage("AICS_DRAFT_ALREADY_REVIEWED") } }, { status: 409 });
-      }
-      const { data: editedDraft, error: editError } = await admin
-        .from("ai_reply_drafts")
-        .update({ body: input.body, provenance: "human_edited" })
-        .eq("id", draft.id)
-        .eq("company_id", companyId)
-        .eq("review_status", "draft")
-        .select("id,review_status,provenance")
-        .maybeSingle();
-      if (editError || !editedDraft) {
-        return NextResponse.json({ error: { code: "AICS_INVALID_TRANSITION", message: safeAicsMessage("AICS_INVALID_TRANSITION") } }, { status: 409 });
-      }
-      await recordServerAuditEvent({ companyId, actorUserId: user.id, action: "ai_customer_service.draft_edited", entityType: "ai_reply_draft", entityId: draft.id, metadata: { status: "draft", provenance: "human_edited" } });
-      return NextResponse.json({ ok: true, draftId: draft.id, reviewStatus: editedDraft.review_status, provenance: editedDraft.provenance });
-    }
-    if (!canReviewDraft(draft.review_status, input.reviewStatus)) {
-      return NextResponse.json({ error: { code: "AICS_DRAFT_ALREADY_REVIEWED", message: safeAicsMessage("AICS_DRAFT_ALREADY_REVIEWED") } }, { status: 409 });
-    }
-
-    const edited = isHumanEdit(input.body);
-    const { data: updated, error } = await admin
-      .from("ai_reply_drafts")
-      .update({
-        review_status: input.reviewStatus,
-        ...(input.body ? { body: input.body } : {}),
-        provenance: edited ? "human_edited" : draft.provenance,
-        reviewed_by: user.id,
-        reviewed_at: new Date().toISOString(),
-      })
-      .eq("id", draft.id)
-      .eq("company_id", companyId)
-      .eq("review_status", "draft")
-      .select("id,review_status,provenance")
-      .maybeSingle();
-    if (error) return NextResponse.json({ error: { code: "AICS_INVALID_TRANSITION", message: "Beoordeling kon niet veilig worden opgeslagen." } }, { status: 409 });
-    if (!updated) return NextResponse.json({ error: { code: "AICS_DRAFT_ALREADY_REVIEWED", message: safeAicsMessage("AICS_DRAFT_ALREADY_REVIEWED") } }, { status: 409 });
-
-    await recordServerAuditEvent({
-      companyId,
-      actorUserId: user.id,
-      action: input.reviewStatus === "approved" ? "ai_customer_service.draft_approved" : "ai_customer_service.draft_rejected",
-      entityType: "ai_reply_draft",
-      entityId: draft.id,
-      metadata: { status: input.reviewStatus, provenance: updated.provenance },
+    const { data: result, error } = await admin.rpc("review_ai_reply_draft", {
+      target_company_id: companyId,
+      target_conversation_id: conversationId,
+      target_actor_id: user.id,
+      target_review_status: input.reviewStatus,
+      target_body: input.body ?? null,
     });
-    return NextResponse.json({ ok: true, draftId: draft.id, reviewStatus: updated.review_status, provenance: updated.provenance });
+    const code = typeof error?.message === "string" ? error.message.split(/\s+/)[0] : "";
+    const safeCode = [
+      "AICS_ACCESS_FORBIDDEN",
+      "AICS_NOT_AVAILABLE",
+      "AICS_CONVERSATION_NOT_FOUND",
+      "AICS_DRAFT_NOT_FOUND",
+      "AICS_DRAFT_ALREADY_REVIEWED",
+      "AICS_HUMAN_OWNED",
+      "AICS_INVALID_TRANSITION",
+    ].includes(code) ? code : "AICS_INVALID_TRANSITION";
+    if (error || !result) {
+      const status = safeCode === "AICS_ACCESS_FORBIDDEN" || safeCode === "AICS_NOT_AVAILABLE" ? 403
+        : safeCode === "AICS_CONVERSATION_NOT_FOUND" || safeCode === "AICS_DRAFT_NOT_FOUND" ? 404 : 409;
+      return NextResponse.json({ error: { code: safeCode, message: safeAicsMessage(safeCode as Parameters<typeof safeAicsMessage>[0]) } }, { status });
+    }
+    return NextResponse.json({ ok: true, draftId: result.draft_id, reviewStatus: result.review_status, provenance: result.provenance });
   });
 }

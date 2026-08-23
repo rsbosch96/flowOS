@@ -219,10 +219,25 @@ test("AICS1.3 review transitions preserve human-edit provenance and reject dupli
   assert.equal(isHumanEdit(undefined), false);
 
   const review = await file("src/app/api/v1/companies/[companyId]/conversations/[conversationId]/ai-draft/review/route.ts");
-  assert.match(review, /eq\("review_status", "draft"\)/);
-  assert.match(review, /provenance: edited \? "human_edited"/);
+  assert.match(review, /review_ai_reply_draft/);
+  assert.match(review, /target_review_status: input\.reviewStatus/);
   assert.match(review, /AICS_DRAFT_ALREADY_REVIEWED/);
-  assert.match(review, /reviewed_by: user\.id/);
+  assert.match(review, /AICS_HUMAN_OWNED/);
+});
+
+test("AICS1.5 review is database-authoritative against stale human takeover", async () => {
+  const migration = await file("supabase/migrations/20260823130000_aics1_5_stale_review_guard.sql");
+  const review = await file("src/app/api/v1/companies/[companyId]/conversations/[conversationId]/ai-draft/review/route.ts");
+  assert.match(migration, /create or replace function public\.review_ai_reply_draft/);
+  assert.match(migration, /from public\.ai_conversation_state[\s\S]*for update/);
+  assert.match(migration, /if current_ownership = 'human_owned'[\s\S]*AICS_HUMAN_OWNED/);
+  assert.match(migration, /from public\.ai_reply_drafts[\s\S]*for update/);
+  assert.match(migration, /ai_customer_service\.draft_approved/);
+  assert.match(migration, /ai_customer_service\.draft_rejected/);
+  assert.match(review, /review_ai_reply_draft/);
+  assert.match(review, /AICS_HUMAN_OWNED/);
+  assert.match(review, /: 409/);
+  assert.doesNotMatch(review, /\.from\("ai_reply_drafts"\)\s*\.update/);
 });
 
 test("AICS1.3 takeover is idempotent, role-gated and blocks generation", async () => {
@@ -282,11 +297,12 @@ test("AICS1.3 workflow has no auto-send or financial action boundary", async () 
   const draft = await file("src/app/api/v1/companies/[companyId]/conversations/[conversationId]/ai-draft/route.ts");
   const review = await file("src/app/api/v1/companies/[companyId]/conversations/[conversationId]/ai-draft/review/route.ts");
   const takeover = await file("src/app/api/v1/companies/[companyId]/conversations/[conversationId]/ai-draft/takeover/route.ts");
+  const reviewMigration = await file("supabase/migrations/20260823130000_aics1_5_stale_review_guard.sql");
   for (const source of [draft, review, takeover]) {
     assert.doesNotMatch(source, /sendMessage|resend|stripe|payments?|refund|quotes\.update|invoices\.update|memberships\.update/i);
   }
   assert.match(draft, /create_ai_reply_draft/);
-  assert.match(review, /ai_customer_service\.draft_(approved|rejected)/);
+  assert.match(reviewMigration, /ai_customer_service\.draft_(approved|rejected)/);
   assert.match(takeover, /ai_customer_service\.human_takeover/);
 });
 
@@ -298,6 +314,7 @@ test("AICS1.4 adds a gated human review interface without changing Core storage"
   const contribution = await file("src/features/ai-customer-service/module-contribution.tsx");
   const registry = await file("src/modules/registry.ts");
   const reviewRoute = await file("src/app/api/v1/companies/[companyId]/conversations/[conversationId]/ai-draft/review/route.ts");
+  const reviewMigration = await file("supabase/migrations/20260823130000_aics1_5_stale_review_guard.sql");
   const layout = await file("src/app/(app)/app/[companySlug]/layout.tsx");
 
   assert.match(listPage, /resolveCompanyModuleAccess/);
@@ -320,7 +337,7 @@ test("AICS1.4 adds a gated human review interface without changing Core storage"
   assert.match(registry, /aiCustomerServiceModuleContribution/);
   assert.match(layout, /role: membership\?\.role/);
   assert.match(reviewRoute, /reviewStatus: z\.enum\(\["draft", "approved", "rejected"\]\)/);
-  assert.match(reviewRoute, /draft_edited/);
+  assert.match(reviewMigration, /draft_edited/);
   assert.doesNotMatch(panel, /OpenAI|Resend|Stripe|sendMessage|conversation_messages.*insert/i);
   assert.doesNotMatch(panel, /payload\.error\?\.message|error\.message/);
   assert.doesNotMatch(listPage, /create table|alter table|insert into public\./i);
