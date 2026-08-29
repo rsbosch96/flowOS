@@ -1,6 +1,6 @@
 import Link from "next/link";
+import Image from "next/image";
 import {
-  Building2,
   FileText,
   LayoutDashboard,
   ListTodo,
@@ -40,7 +40,7 @@ export default async function CompanyLayout({
       <header className="border-b bg-white">
         <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-6">
           <Link href="/" className="flex items-center gap-2 font-semibold">
-            <Building2 className="text-blue-700" /> AI FlowOS
+            <Image src="/brand/flowos-logo.svg" alt="FlowOS" width={180} height={52} priority className="h-9 w-auto" />
           </Link>
           <div className="flex items-center gap-4">
             <Link href="/onboarding" className="text-sm text-slate-600 hover:text-slate-950">
