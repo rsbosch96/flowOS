@@ -1959,3 +1959,30 @@ test("FS1.4 keeps Field Service UI module-gated and delegates mutations to exist
   assert.doesNotMatch(list, /createClient|supabase\.from/);
   assert.doesNotMatch(detail, /createClient|supabase\.from/);
 });
+
+test("ZC1.6 makes membership writes RPC-only and owner-safe", async () => {
+  const migration = await file("supabase/migrations/20260830075311_zc1_6_membership_security_hardening.sql");
+  const route = await file("src/app/api/v1/companies/[companyId]/members/route.ts");
+
+  assert.match(migration, /drop policy if exists "owners manage memberships"/);
+  assert.match(migration, /revoke insert, update, delete on table public\.company_memberships/);
+  assert.match(migration, /grant select on table public\.company_memberships to authenticated/);
+  assert.match(migration, /create or replace function public\.add_company_member_by_email/);
+  assert.match(migration, /MEMBERSHIP_ROLE_NOT_ALLOWED/);
+  assert.match(migration, /MEMBERSHIP_ALREADY_EXISTS/);
+  assert.match(migration, /create or replace function public\.change_company_member_role/);
+  assert.match(migration, /create or replace function public\.remove_company_member/);
+  assert.match(migration, /MEMBERSHIP_OWNER_PROTECTED/);
+  for (const action of ["membership.member_added", "membership.role_changed", "membership.member_removed"]) {
+    assert.match(migration, new RegExp(action.replace(".", "\\.")));
+  }
+  for (const rpc of ["add_company_member_by_email", "change_company_member_role", "remove_company_member"]) {
+    assert.match(migration, new RegExp(`grant execute on function public\\.${rpc}`));
+  }
+  assert.match(route, /rpc\("add_company_member_by_email"/);
+  assert.match(route, /rpc\("change_company_member_role"/);
+  assert.match(route, /rpc\("remove_company_member"/);
+  assert.doesNotMatch(route, /\.from\("company_memberships"\)\.update/);
+  assert.doesNotMatch(route, /\.from\("company_memberships"\)\.delete/);
+  assert.doesNotMatch(route, /error\.message \}\s*\}, \{ status: 409 \}\)/);
+});
