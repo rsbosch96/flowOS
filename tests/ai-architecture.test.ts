@@ -1986,3 +1986,58 @@ test("ZC1.6 makes membership writes RPC-only and owner-safe", async () => {
   assert.doesNotMatch(route, /\.from\("company_memberships"\)\.delete/);
   assert.doesNotMatch(route, /error\.message \}\s*\}, \{ status: 409 \}\)/);
 });
+
+test("ZC1.7 defines a provider-neutral commercial foundation without entitlement side effects", async () => {
+  const statusMigration = await file("supabase/migrations/20260830165900_zc1_7_subscription_status.sql");
+  const migration = await file("supabase/migrations/20260830170000_zc1_7_commercial_foundation.sql");
+  const auditMigration = await file("supabase/migrations/20260830173000_zc1_7_commercial_audit.sql");
+  const docs = await file("docs/architecture/commercial-foundation.md");
+
+  for (const table of ["commercial_plans", "commercial_plan_versions", "commercial_plan_entitlements", "subscription_items"]) {
+    assert.match(migration, new RegExp(`create table if not exists public\\.${table}`));
+    assert.match(migration, new RegExp(`alter table public\\.${table} enable row level security`));
+  }
+  for (const field of ["plan_version_id", "billing_provider", "currency", "billing_interval", "base_price_cents", "included_seats", "extra_seat_price_cents", "intro_price_until", "cancel_requested_at", "cancelled_at", "suspended_at"]) {
+    assert.match(migration, new RegExp(`add column if not exists ${field}`));
+  }
+  assert.match(migration, /drop constraint if exists subscriptions_company_id_key/);
+  assert.match(migration, /subscriptions_one_current_primary_per_company_idx/);
+  assert.match(statusMigration, /add value if not exists 'grace_period'/);
+  assert.match(statusMigration, /add value if not exists 'suspended'/);
+  assert.match(migration, /status in \([\s\S]*'grace_period'/);
+  assert.match(migration, /commercial_plans_status_check/);
+  assert.match(migration, /commercial_plan_versions_plan_version_key/);
+  assert.match(migration, /commercial_plan_versions_base_price_check/);
+  assert.match(migration, /commercial_plan_versions_included_seats_check/);
+  assert.match(migration, /commercial_plan_versions_interval_check/);
+  assert.match(migration, /commercial_plan_versions_currency_check/);
+  assert.match(migration, /subscription_items_quantity_check/);
+  assert.match(migration, /subscription_items_price_check/);
+  assert.match(migration, /billing_provider in \('manual', 'stripe'\)/);
+  assert.match(migration, /billing_interval in \('monthly', 'yearly'\)/);
+  assert.match(migration, /grant select on table public\.commercial_plans, public\.commercial_plan_versions, public\.commercial_plan_entitlements, public\.subscription_items to service_role/);
+  assert.match(migration, /grant insert, update, delete on table public\.commercial_plans, public\.commercial_plan_versions, public\.commercial_plan_entitlements, public\.subscription_items to service_role/);
+  assert.match(migration, /grant select on table public\.subscription_items to authenticated/);
+  assert.match(migration, /prevent_referenced_plan_version_mutation/);
+  assert.match(migration, /COMMERCIAL_PLAN_VERSION_IMMUTABLE/);
+  assert.match(auditMigration, /subscription\.created/);
+  assert.match(auditMigration, /subscription\.status_changed/);
+  assert.match(auditMigration, /subscription\.cancel_requested/);
+  assert.match(auditMigration, /subscription\.cancelled/);
+  assert.match(auditMigration, /subscription\.suspended/);
+  assert.match(auditMigration, /subscription_item\.created/);
+  assert.match(auditMigration, /subscription_item\.quantity_changed/);
+  assert.match(auditMigration, /subscription_item\.removed/);
+  assert.match(auditMigration, /search_path = public, pg_temp/);
+  assert.match(migration, /FlowOS Early Access/);
+  assert.match(migration, /4900/);
+  assert.match(migration, /900/);
+  assert.match(migration, /'planning', true/);
+  assert.doesNotMatch(migration, /insert into public\.company_module_entitlements/i);
+  assert.doesNotMatch(migration, /grant (insert|update|delete).*commercial_.* to (anon|authenticated)/i);
+  assert.match(docs, /single company subscription\s+concept/);
+  assert.match(docs, /snapshot fields/);
+  assert.match(docs, /Stripe is never an authorization source/);
+  assert.match(docs, /ZC1\.8/);
+  assert.match(docs, /ZC1\.9/);
+});
