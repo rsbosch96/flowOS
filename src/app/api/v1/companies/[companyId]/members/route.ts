@@ -1,18 +1,17 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
-const addSchema = z.object({ email: z.string().trim().email().max(254), role: z.enum(["employee", "technician"]) });
 const updateSchema = z.object({ userId: z.string().uuid(), role: z.enum(["employee", "technician"]) });
 function membershipErrorMessage(error: { code?: string; message?: string }) {
   const message = error.message ?? "";
-  if (message.includes("MEMBERSHIP_TARGET_NOT_FOUND")) return "Teamlid kon niet worden gevonden.";
-  if (message.includes("MEMBERSHIP_ALREADY_EXISTS")) return "Dit teamlid is al toegevoegd.";
-  if (message.includes("MEMBERSHIP_ROLE_NOT_ALLOWED")) return "Deze rol is niet toegestaan.";
   if (message.includes("MEMBERSHIP_OWNER_PROTECTED")) return "De eigenaar kan niet via teambeheer worden gewijzigd of verwijderd.";
   if (message.includes("MEMBERSHIP_OWNER_REQUIRED")) return "Alleen een eigenaar mag teamleden beheren.";
+  if (message.includes("MEMBERSHIP_ROLE_NOT_ALLOWED")) return "Deze rol is niet toegestaan.";
   return error.code === "42501" ? "Deze wijziging is niet toegestaan." : "Teamwijziging mislukt.";
 }
 async function owner(companyId: string) { const supabase = await createClient(); const { data: { user } } = await supabase.auth.getUser(); if (!user) return { supabase, error: NextResponse.json({ error: { message: "Log opnieuw in." } }, { status: 401 }) }; const { data } = await supabase.from("company_memberships").select("role").eq("company_id", companyId).eq("user_id", user.id).maybeSingle(); if (data?.role !== "owner") return { supabase, error: NextResponse.json({ error: { message: "Alleen een eigenaar mag teamleden beheren." } }, { status: 403 }) }; return { supabase, error: null }; }
-export async function POST(request: Request, { params }: { params: Promise<{ companyId: string }> }) { const input = addSchema.safeParse(await request.json()); if (!input.success) return NextResponse.json({ error: { message: "Controleer e-mail en rol." } }, { status: 400 }); const { companyId } = await params; const access = await owner(companyId); if (access.error) return access.error; const { error } = await access.supabase.rpc("add_company_member_by_email", { target_company_id: companyId, target_email: input.data.email, target_role: input.data.role }); if (error) return NextResponse.json({ error: { message: membershipErrorMessage(error) } }, { status: 409 }); return NextResponse.json({ ok: true }); }
+export async function POST() {
+  return NextResponse.json({ error: { message: "Gebruik de uitnodigingsroute om een teamlid toe te voegen." } }, { status: 410 });
+}
 export async function PATCH(request: Request, { params }: { params: Promise<{ companyId: string }> }) { const input = updateSchema.safeParse(await request.json()); if (!input.success) return NextResponse.json({ error: { message: "Ongeldige rol." } }, { status: 400 }); const { companyId } = await params; const access = await owner(companyId); if (access.error) return access.error; const { error } = await access.supabase.rpc("change_company_member_role", { target_company_id: companyId, target_user_id: input.data.userId, target_role: input.data.role }); if (error) return NextResponse.json({ error: { message: membershipErrorMessage(error) } }, { status: 409 }); return NextResponse.json({ ok: true }); }
 export async function DELETE(request: Request, { params }: { params: Promise<{ companyId: string }> }) { const userId = new URL(request.url).searchParams.get("userId"); if (!userId || !z.string().uuid().safeParse(userId).success) return NextResponse.json({ error: { message: "Ongeldige gebruiker." } }, { status: 400 }); const { companyId } = await params; const access = await owner(companyId); if (access.error) return access.error; const { error } = await access.supabase.rpc("remove_company_member", { target_company_id: companyId, target_user_id: userId }); if (error) return NextResponse.json({ error: { message: membershipErrorMessage(error) } }, { status: 409 }); return NextResponse.json({ ok: true }); }

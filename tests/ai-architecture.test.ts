@@ -1979,7 +1979,7 @@ test("ZC1.6 makes membership writes RPC-only and owner-safe", async () => {
   for (const rpc of ["add_company_member_by_email", "change_company_member_role", "remove_company_member"]) {
     assert.match(migration, new RegExp(`grant execute on function public\\.${rpc}`));
   }
-  assert.match(route, /rpc\("add_company_member_by_email"/);
+  assert.doesNotMatch(route, /rpc\("add_company_member_by_email"/);
   assert.match(route, /rpc\("change_company_member_role"/);
   assert.match(route, /rpc\("remove_company_member"/);
   assert.doesNotMatch(route, /\.from\("company_memberships"\)\.update/);
@@ -2040,4 +2040,35 @@ test("ZC1.7 defines a provider-neutral commercial foundation without entitlement
   assert.match(docs, /Stripe is never an authorization source/);
   assert.match(docs, /ZC1\.8/);
   assert.match(docs, /ZC1\.9/);
+});
+
+test("ZC1.8B keeps seats and invitations transactional, tenant-safe and token-hashed", async () => {
+  const migration = await file("supabase/migrations/20260901120000_zc1_8b_seats_invitations.sql");
+  const guardFix = await file("supabase/migrations/20260901123000_zc1_8b_capacity_guard_fix.sql");
+  const invitationRoute = await file("src/app/api/v1/companies/[companyId]/invitations/route.ts");
+  const acceptRoute = await file("src/app/api/v1/invitations/accept/route.ts");
+  const team = await file("src/features/team/components/team-manager.tsx");
+  const docs = await file("docs/architecture/seat-invitations.md");
+  for (const field of ["company_id", "normalized_email", "role", "token_hash", "status", "expires_at", "accepted_by", "accepted_at", "revoked_by", "revoked_at"]) assert.match(migration, new RegExp(field));
+  assert.match(migration, /company_invitations_pending_email_key/);
+  assert.match(migration, /status = 'pending'/);
+  assert.match(migration, /extensions\.gen_random_bytes\(32\)/);
+  assert.match(migration, /extensions\.digest\(token::text, 'sha256'::text\)/);
+  assert.doesNotMatch(migration, /raw_token\s+text\s+not null/i);
+  for (const fn of ["create_company_invitation", "revoke_company_invitation", "accept_company_invitation", "company_seat_limit", "company_seat_usage"]) assert.match(migration, new RegExp(`function public\\.${fn}`));
+  assert.match(migration, /COMMERCIAL_SUBSCRIPTION_REQUIRED/);
+  assert.match(migration, /SEAT_LIMIT_REACHED/);
+  assert.match(migration, /SEAT_CAPACITY_BELOW_USAGE/);
+  assert.match(migration, /alter function public\.bootstrap_company\(text, text\) set search_path = public, pg_temp/);
+  assert.match(migration, /revoke all on function public\.add_company_member_by_email/);
+  assert.match(guardFix, /coalesce\(current_setting\('app\.zc1_8b_membership_write', true\), ''\)/);
+  assert.match(invitationRoute, /create_company_invitation/);
+  assert.match(invitationRoute, /Uitnodiging aangemaakt/);
+  assert.match(acceptRoute, /accept_company_invitation/);
+  assert.match(team, /Openstaande uitnodigingen/);
+  assert.match(team, /E-mailverzending is niet actief/);
+  assert.match(invitationRoute, /FLOWOS_INVITATION_TOKEN_MODE === "staging"/);
+  assert.match(invitationRoute, /VERCEL_ENV !== "production"/);
+  assert.match(docs, /SHA-256 token hash/);
+  assert.match(docs, /company row is the serialization boundary/);
 });
