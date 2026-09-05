@@ -2121,3 +2121,29 @@ test("ZC1.9C defines additive grants and suspensions with a fail-closed resolver
   assert.match(resolverRepair, /select path into dependency_path_result/);
   assert.doesNotMatch(resolverRepair, /coalesce\(\(array_agg\(path/);
 });
+
+test("ZC1.9D converges AICS runtime and policies on the effective resolver", async () => {
+  const migration = await file("supabase/migrations/20260905093857_zc1_9d_entitlement_runtime_convergence.sql");
+  const helper = await file("src/lib/entitlements/server.ts");
+  assert.match(migration, /create or replace function public\.assert_aics_module_available/);
+  assert.match(migration, /set_config\('request\.jwt\.claim\.sub', target_actor_id::text, true\)/);
+  assert.match(migration, /from public\.resolve_effective_module_access\(target_company_id, 'ai_customer_service'\)/);
+  for (const functionName of ["create_ai_reply_draft", "review_ai_reply_draft", "takeover_ai_conversation"]) {
+    const start = migration.indexOf(`create or replace function public.${functionName}`);
+    assert.ok(start >= 0, `${functionName} is not replaced by ZC1.9D`);
+    const body = migration.slice(start, migration.indexOf("\n$$;", start));
+    assert.match(body, /assert_aics_module_available/);
+    assert.doesNotMatch(body, /company_module_entitlements|module_catalog/);
+  }
+  assert.match(migration, /current_ownership text/);
+  assert.match(migration, /AICS_HUMAN_OWNED/);
+  assert.match(migration, /from public\.ai_conversation_state[\s\S]*for update/);
+  const concurrencyFix = await file("supabase/migrations/20260905095240_zc1_9d_aics_concurrency_preservation.sql");
+  assert.match(concurrencyFix, /assert_aics_module_available/);
+  assert.match(concurrencyFix, /AICS_HUMAN_OWNED/);
+  assert.match(concurrencyFix, /for update/);
+  assert.match(migration, /resolve_effective_module_access\(company_id, 'ai_customer_service'\)/);
+  assert.doesNotMatch(migration, /resolve_company_module_access\(company_id, 'ai_customer_service'\)/);
+  assert.match(helper, /"MODULE_SUSPENDED"/);
+  assert.match(helper, /resolve_company_module_access/);
+});
