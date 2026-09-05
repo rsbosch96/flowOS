@@ -2072,3 +2072,52 @@ test("ZC1.8B keeps seats and invitations transactional, tenant-safe and token-ha
   assert.match(docs, /SHA-256 token hash/);
   assert.match(docs, /company row is the serialization boundary/);
 });
+
+test("ZC1.9C defines additive grants and suspensions with a fail-closed resolver", async () => {
+  const migration = await file("supabase/migrations/20260904141623_zc1_9c_entitlement_foundation.sql");
+  const resolverRepair = await file("supabase/migrations/20260904141756_zc1_9c_resolver_type_fix.sql");
+  assert.match(migration, /create table public\.entitlement_grants/);
+  assert.match(migration, /create table public\.entitlement_suspensions/);
+  for (const source of ["commercial", "manual", "internal", "promotional", "migration_legacy"]) {
+    assert.match(migration, new RegExp(`'${source}'`));
+  }
+  for (const field of ["valid_from", "valid_until", "reference_kind", "reference_key", "actor_kind", "actor_user_id", "actor_principal", "revoked_at", "revoked_by_user_id", "revoked_by_principal"]) {
+    assert.match(migration, new RegExp(field));
+  }
+  assert.match(migration, /entitlement_grants_validity_check/);
+  assert.match(migration, /entitlement_grants_state_check/);
+  assert.match(migration, /entitlement_grants_identity_unique/);
+  assert.match(migration, /entitlement_suspensions_core_check/);
+  assert.match(migration, /entitlement_suspensions_identity_unique/);
+  assert.match(migration, /alter table public\.entitlement_grants enable row level security/);
+  assert.match(migration, /alter table public\.entitlement_suspensions enable row level security/);
+  assert.match(migration, /revoke all on table public\.entitlement_grants from public, anon, authenticated, service_role/);
+  assert.match(migration, /revoke all on table public\.entitlement_suspensions from public, anon, authenticated, service_role/);
+  assert.match(migration, /create or replace function public\.resolve_effective_module_access/);
+  assert.match(migration, /returns table \(decision text, code text, resolved_module_key text, dependency_path text\[\]\)/);
+  assert.match(migration, /auth\.uid\(\) is null or not exists/);
+  assert.match(migration, /MODULE_SUSPENDED/);
+  assert.match(migration, /MODULE_NOT_ENTITLED/);
+  assert.match(migration, /MODULE_DEPENDENCY_MISSING/);
+  assert.match(migration, /statement_timestamp\(\)/);
+  assert.match(migration, /create or replace function public\.create_entitlement_grant/);
+  assert.match(migration, /create or replace function public\.revoke_entitlement_grant/);
+  assert.match(migration, /create or replace function public\.create_entitlement_suspension/);
+  assert.match(migration, /create or replace function public\.revoke_entitlement_suspension/);
+  assert.match(migration, /ENTITLEMENT_OPERATOR_DENIED/);
+  assert.match(migration, /ENTITLEMENT_COMMERCIAL_PROJECTION_DISABLED/);
+  assert.match(migration, /ENTITLEMENT_LEGACY_WRITE_FORBIDDEN/);
+  assert.match(migration, /entitlement\.grant_created/);
+  assert.match(migration, /entitlement\.grant_revoked/);
+  assert.match(migration, /entitlement\.suspension_created/);
+  assert.match(migration, /entitlement\.suspension_revoked/);
+  assert.match(migration, /entitlement\.legacy_backfilled/);
+  assert.match(migration, /on conflict \(company_id, module_key, source, reference_kind, reference_key\) do nothing/);
+  assert.match(migration, /where legacy\.is_enabled/);
+  assert.doesNotMatch(migration, /insert into public\.entitlement_grants[\s\S]*commercial.*subscription/i);
+  assert.match(migration, /LEGACY_ENTITLEMENT_WRITES_FROZEN/);
+  assert.match(migration, /set search_path = public, pg_temp/);
+  assert.match(resolverRepair, /create or replace function public\.resolve_effective_module_access/);
+  assert.match(resolverRepair, /select path into dependency_path_result/);
+  assert.doesNotMatch(resolverRepair, /coalesce\(\(array_agg\(path/);
+});
