@@ -2042,6 +2042,47 @@ test("ZC1.7 defines a provider-neutral commercial foundation without entitlement
   assert.match(docs, /ZC1\.9/);
 });
 
+test("ZC2.3 keeps Early Access activation operator-only, transactional and provider-neutral", async () => {
+  const migration = await file("supabase/migrations/20260905174319_zc2_3_safe_customer_activation.sql");
+  const route = await file("src/app/api/internal/early-access/activate/route.ts");
+  const runbook = await file("docs/operations/early-access-runbook.md");
+
+  assert.match(migration, /create or replace function public\.activate_early_access_company\(target_company_id uuid\)/);
+  assert.match(migration, /set search_path = public, pg_temp/);
+  assert.match(migration, /grant execute on function public\.activate_early_access_company\(uuid\) to service_role/);
+  assert.doesNotMatch(migration, /grant execute on function public\.activate_early_access_company\(uuid\) to authenticated/);
+  assert.match(migration, /early_access/);
+  assert.match(migration, /base_price_cents = 4900/);
+  assert.match(migration, /included_seats = 3/);
+  assert.match(migration, /extra_seat_price_cents = 900/);
+  assert.match(migration, /billing_provider,.*manual/s);
+  assert.match(migration, /intro_price_until_value := activation_started \+ interval '12 months'/);
+  assert.match(migration, /source,[\s\S]*'commercial'/);
+  assert.match(migration, /reference_kind,[\s\S]*'subscription'/);
+  assert.match(migration, /commercial\.activation_started/);
+  assert.match(migration, /commercial\.subscription_created/);
+  assert.match(migration, /commercial\.entitlement_projected/);
+  assert.match(migration, /commercial\.activation_completed/);
+  assert.match(migration, /on conflict|already_active/);
+  assert.match(migration, /COMMERCIAL_CAPACITY_EXCEEDED/);
+  assert.match(migration, /revoke_early_access_commercial_grant/);
+  assert.doesNotMatch(migration, /stripe_customer_id,\s*stripe_subscription_id,\s*stripe_price_id\)\s*values[\s\S]*'[A-Za-z0-9_]/i);
+  assert.doesNotMatch(migration, /insert into public\.company_module_entitlements/i);
+  assert.doesNotMatch(migration, /field_service.*source|ai_customer_service.*source/i);
+
+  assert.match(route, /FLOWOS_EARLY_ACCESS_OPERATOR_ENABLED/);
+  assert.match(route, /FLOWOS_EARLY_ACCESS_OPERATOR_KEY/);
+  assert.match(route, /timingSafeEqual/);
+  assert.match(route, /activate_early_access_company/);
+  assert.doesNotMatch(route, /createClient\(\)/);
+  assert.doesNotMatch(route, /stripe|resend|openai/i);
+
+  assert.match(runbook, /POST \/api\/internal\/early-access\/activate/);
+  assert.match(runbook, /FLOWOS_EARLY_ACCESS_OPERATOR_KEY/);
+  assert.match(runbook, /Field Service.*MODULE_NOT_RELEASED|Field Service.*denied/i);
+  assert.match(runbook, /no manual SQL rollback/i);
+});
+
 test("ZC1.8B keeps seats and invitations transactional, tenant-safe and token-hashed", async () => {
   const migration = await file("supabase/migrations/20260901120000_zc1_8b_seats_invitations.sql");
   const guardFix = await file("supabase/migrations/20260901123000_zc1_8b_capacity_guard_fix.sql");

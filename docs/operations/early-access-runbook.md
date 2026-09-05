@@ -118,7 +118,7 @@ synthetic test tenant and receives no real customer data.
 | 6. Authentication/signup | Customer with CEO support | Use the normal Supabase Auth signup/login flow. | User/company identifier, never a password or token. | Auth or email-confirmation behavior is uncertain. |
 | 7. Company bootstrap | Customer/CEO | Use `/onboarding` and `bootstrap_company`; do not use production SQL. | Company ID, owner membership, profile completion. | Duplicate company, wrong tenant or partial state is observed. |
 | 8. Company identity verification | CEO | Verify legal/company details and authorized owner. | Read-only profile check. | Details do not match approved company evidence. |
-| 9. Commercial activation | Authorized operator | Use the future guarded activation path. | Transaction ID/snapshot ID and audit event. | **BLOCKED — ZC2.3 IMPLEMENTATION REQUIRED.** |
+| 9. Commercial activation | Authorized operator | Use the guarded internal operator route in Section 7. | Activation result, subscription/grant IDs and audit events. | Route disabled, company ineligible, conflict or incomplete result. |
 | 10. Seat verification | CEO/operator | Verify included seats, active memberships and pending invitations. | Read-only seat snapshot. | Capacity or subscription authority cannot be proven. |
 | 11. Planning verification | CEO/operator | Verify Planning is released and effectively entitled. | Read-only resolver result and audit evidence. | Grant path is manual/unproven or module is not released. |
 | 12. First-login acceptance | CEO/operator | Run Section 8 without creating business records. | Completed smoke checklist. | Wrong tenant, error, unexpected module or data exposure. |
@@ -143,11 +143,35 @@ risk before accepting the result and verify the tenant context after login.
 Do not use a direct production SQL fallback. If bootstrap fails or creates an
 unexpected relationship, stop, preserve evidence and follow the incident runbook.
 
-## 7. Commercial activation boundary
+## 7. Commercial activation boundary and operator procedure
 
-Commercial activation is currently **BLOCKED — ZC2.3 IMPLEMENTATION REQUIRED**.
+The controlled operator path is enabled only when the deployment explicitly sets
+the server-only `FLOWOS_EARLY_ACCESS_OPERATOR_ENABLED=true` and provides an
+operator key through `FLOWOS_EARLY_ACCESS_OPERATOR_KEY`. These values are never
+stored in the repository or exposed to browser code.
 
-The intended trusted snapshot must establish, transactionally and idempotently:
+### Eligibility
+
+Before calling the route, complete Section 4 and verify the exact company ID,
+authorized owner, production project identity and current health. The company
+must not have an access-bearing primary subscription, and active memberships
+plus valid pending invitations must not exceed three. Do not activate a demo,
+historical acceptance tenant or a company with uncertain provenance.
+
+### Operator action
+
+1. Call `POST /api/internal/early-access/activate` from the trusted server-side operator context.
+2. Send only the exact `companyId` in the JSON body.
+3. Send the deployment-only operator key in the server-controlled header; never expose it to a normal company owner or client bundle.
+4. Treat a non-200 response as **NO-GO**. Do not retry blindly or use SQL.
+
+The route validates the operator key, calls the service-role-only
+`activate_early_access_company` RPC and returns a safe activation result. Normal
+authenticated users and company owners cannot call the RPC directly.
+
+### Expected result and verification
+
+The successful result must show an active, primary provider-neutral snapshot:
 
 - plan `early_access`;
 - EUR, monthly;
@@ -157,9 +181,27 @@ The intended trusted snapshot must establish, transactionally and idempotently:
 - intro-price expiration at activation plus 12 months;
 - Planning as the included commercial module.
 
-The activation path must be operator-authorized, company-scoped, audited and
-fail-closed. It must not depend on fabricated Stripe objects. Do not create a
-subscription, mutate an entitlement, or run manual production SQL in this phase.
+Verify read-only that:
+
+- exactly one current primary subscription exists;
+- provider references remain NULL;
+- seat limit is three before extra seats;
+- the Planning grant has source `commercial` and references that subscription;
+- existing independent grants and suspensions remain unchanged;
+- Field Service and AICS still return `MODULE_NOT_RELEASED`;
+- expected commercial activation audit events exist.
+
+The activation path is operator-authorized, company-scoped, audited and
+fail-closed. It does not depend on fabricated Stripe objects.
+
+### STOP and rollback boundary
+
+The database operation is one transaction and is idempotent. A repeated call on
+the same exact active contract returns `already_active` without changing the
+intro period or duplicating grants/audit transitions. Any conflict, capacity
+overflow, missing plan, unknown project identity or partial result is a STOP:
+preserve evidence and escalate. There is no manual SQL rollback. Future
+cancellation, suspension and reactivation remain separate lifecycle decisions.
 
 ## 8. Seat operations
 
@@ -445,7 +487,7 @@ The following are intentionally not worked around in this documentation phase:
 
 - real production backup and isolated restore proof (BR1);
 - legal/company/privacy approval;
-- safe commercial activation and subscription snapshot creation (ZC2.3);
+- commercial cancellation, suspension and reactivation lifecycle (future ZC1.10 scope);
 - Planning provisioning for a new commercial tenant;
 - offboarding/export/deletion implementation (ZC2.5);
 - second technical/support operator;
@@ -461,6 +503,7 @@ customer-#1 blocker is either a mandatory gate in Section 4, explicitly deferred
 in Sections 7, 18, 19 or 25, or classified as a non-blocking manual process for
 the 1–5 customer scale.
 
-This runbook introduces no application code, database migration, provider
-activation, subscription, entitlement mutation, fixture, secret or environment
-change. It does not authorize ZC2.3, ZC1.10 or any production action.
+This runbook update documents the ZC2.3 operator procedure. It does not
+authorize a production activation by itself, enable Stripe/providers, perform a
+database write or authorize ZC1.10. A customer activation still requires every
+Section 4 gate to be PASS.
