@@ -2203,3 +2203,36 @@ test("ZC1.9D converges AICS runtime and policies on the effective resolver", asy
   assert.match(helper, /"MODULE_SUSPENDED"/);
   assert.match(helper, /resolve_company_module_access/);
 });
+
+test("ZC2.4B support operations keep Early Access boundaries and secret redaction explicit", async () => {
+  const checklist = await file("docs/operations/support-operator-checklist.md");
+  const incident = await file("docs/operations/templates/support-incident-record-template.md");
+  const communication = await file("docs/operations/templates/support-communication-templates.md");
+  const support = await file("docs/operations/pilot-support.md");
+  const response = await file("docs/operations/incident-response.md");
+  for (const source of [checklist, incident, communication, support]) {
+    assert.match(source, /password|wachtwoorden/i);
+    assert.match(source, /JWT|session token|sessietoken/i);
+    assert.match(source, /API key|API-keys|API-sleutels/i);
+  }
+  assert.match(response, /secrets|credentials|raw public tokens/i);
+  assert.match(checklist, /BR1|backup|herstel/i);
+  assert.match(response, /BR1|backup|herstel/i);
+  assert.match(checklist, /SEV-1 Critical/);
+  assert.match(checklist, /SEV-2 High/);
+  assert.match(checklist, /SEV-3 Normal/);
+  assert.match(checklist, /SEV-4 Low/);
+  assert.match(checklist, /not contractual SLAs/i);
+  assert.match(checklist, /support@<RSTech-domain>/);
+  assert.match(incident, /SUP-YYYYMMDD-###/);
+  assert.match(incident, /INC-YYYYMMDD-###/);
+  assert.match(incident, /Do not store production customer content in Git/i);
+  assert.match(communication, /<SUP-ID>/);
+  assert.match(communication, /<INC-ID>/);
+  assert.match(communication, /<veilige-workaround>/);
+  assert.match(response, /reported.*acknowledged.*triaged.*investigating.*mitigated.*resolved.*closed/s);
+  assert.match(response, /security\/privacy/i);
+  assert.match(response, /SEV-1/);
+  assert.match(support, /Field Service and AICS remain outside the Early Access scope/);
+  assert.match(support, /support@<RSTech-domain>/);
+});
