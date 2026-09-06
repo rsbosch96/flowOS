@@ -28,6 +28,7 @@ import { classifySupportIntent, createDeterministicMockReply, requiresHumanRevie
 import { AicsWorkflowErrorCode, canReviewDraft, classifyCustomerMessage, isHumanEdit, safeAicsMessage } from "../src/ai/customer-service-workflow.ts";
 import { rankKnowledgeEntries } from "../src/ai/knowledge-retrieval.ts";
 import { aicsEscalationLabel, aicsIntentLabel, aicsOwnershipLabel } from "../src/features/ai-customer-service/ui.ts";
+import { formatConversationTimestamp } from "../src/features/conversations/formatting.ts";
 
 const file = (path: string) => readFile(resolve(process.cwd(), path), "utf8");
 const execFileAsync = promisify(execFile);
@@ -47,6 +48,20 @@ test("AICS1.1 keeps Core conversations and messages as the only source of truth"
   assert.match(migration, /references public\.conversations\(id\)/);
   assert.match(migration, /references public\.conversation_messages\(id\)/);
   assert.doesNotMatch(migration, /create table public\.(ai_conversations|ai_messages|customer_service_messages)/);
+});
+
+test("HYD-001 formats conversation timestamps deterministically before client hydration", () => {
+  const timestamp = "2026-08-10T17:46:02.000Z";
+  assert.equal(formatConversationTimestamp(timestamp), "10-8-2026, 19:46:02");
+});
+
+test("HYD-001 conversation list renders a stable server snapshot", async () => {
+  const page = await file("src/app/(app)/app/[companySlug]/conversations/page.tsx");
+  const component = await file("src/features/ai-customer-service/components/conversation-filters.tsx");
+  assert.match(page, /formatConversationTimestamp\(conversation\.last_message_at\)/);
+  assert.match(page, /lastActivityLabel:/);
+  assert.doesNotMatch(component, /new Date\(conversation\.lastActivity/);
+  assert.match(component, /conversation\.lastActivityLabel/);
 });
 
 test("AICS1.1 is planned, Core-only and has no automatic entitlements", async () => {

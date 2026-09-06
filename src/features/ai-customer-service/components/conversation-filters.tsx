@@ -11,7 +11,7 @@ export type ConversationOverviewRow = {
   channel: string;
   status: string;
   statusLabel: string;
-  lastActivity: string | null;
+  lastActivityLabel: string | null;
   aicsState: AicsOwnershipState | null;
   aicsIntent: AicsIntent | null;
   reviewNeeded: boolean;
@@ -44,7 +44,7 @@ export function ConversationFilters({ companySlug, rows, aicsAvailable }: Props)
             <p className="text-sm text-slate-600">{conversation.customerName} · {conversation.channel}</p>
             {aicsAvailable && <p className="mt-1 text-xs text-slate-600">AI: {aicsOwnershipLabel(conversation.aicsState)} · {aicsIntentLabel(conversation.aicsIntent)}{conversation.reviewNeeded ? " · Beoordeling nodig" : ""}</p>}
           </div>
-          <div className="text-right text-sm text-slate-600"><p>{conversation.statusLabel}</p>{conversation.lastActivity && <p className="text-xs">{new Date(conversation.lastActivity).toLocaleString("nl-NL")}</p>}</div>
+          <div className="text-right text-sm text-slate-600"><p>{conversation.statusLabel}</p>{conversation.lastActivityLabel && <p className="text-xs">{conversation.lastActivityLabel}</p>}</div>
         </div>
       </Link>)}
       {!visibleRows.length && <p className="py-8 text-sm text-slate-600">Geen gesprekken voor deze filter.</p>}

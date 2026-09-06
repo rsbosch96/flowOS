@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/server";
 import { resolveCompanyModuleAccess } from "@/lib/entitlements/server";
 import { aiCustomerServiceModule } from "@/lib/entitlements/modules";
 import { ConversationFilters, type ConversationOverviewRow } from "@/features/ai-customer-service/components/conversation-filters";
+import { formatConversationTimestamp } from "@/features/conversations/formatting";
 
 export default async function ConversationsPage({ params }: { params: Promise<{ companySlug: string }> }) {
   const { companySlug } = await params;
@@ -37,7 +38,7 @@ export default async function ConversationsPage({ params }: { params: Promise<{ 
       channel: conversation.channel,
       status: conversation.status,
       statusLabel: conversationStatusLabel(conversation.status),
-      lastActivity: conversation.last_message_at,
+      lastActivityLabel: conversation.last_message_at ? formatConversationTimestamp(conversation.last_message_at) : null,
       aicsState: state?.ownership_state ?? null,
       aicsIntent: state?.latest_intent ?? null,
       reviewNeeded: state?.ownership_state === "needs_review" || state?.escalation_state === "needs_review" || draft?.review_status === "draft",
