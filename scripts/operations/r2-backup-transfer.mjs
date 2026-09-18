@@ -1,0 +1,2 @@
+export function validateR2Key(key) { if (typeof key !== "string" || !/^br1\/[^/]+\/(database|storage|integrity|manifest)\//.test(key) || key.includes("..")) throw new Error("R2 key is not an approved exact backup key."); return key; }
+export function planR2Upload({ key, artifactPath, encrypted = false }) { validateR2Key(key); if (!encrypted || !artifactPath?.endsWith(".age")) throw new Error("R2 accepts encrypted artifacts only."); return { status: "planned", key, artifactPath }; }
