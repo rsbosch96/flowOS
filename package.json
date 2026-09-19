@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --no-warnings tests/ai-architecture.test.ts && node --test tests/br1-2a-recovery-pipeline.test.mjs"
+    "test": "node --experimental-strip-types --no-warnings tests/ai-architecture.test.ts && node --test tests/br1-2a-recovery-pipeline.test.mjs tests/zcf-001-regression.test.mjs"
   },
   "dependencies": {
     "@react-pdf/renderer": "^4.5.1",
